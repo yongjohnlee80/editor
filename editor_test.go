@@ -312,3 +312,30 @@ func TestFooter_ShowsTheEditorMode(t *testing.T) {
 		t.Errorf("mode after i = %q, want INSERT", got)
 	}
 }
+
+// The sample ADR shipped for manual testing must actually open, and it must
+// contain a line long enough to exercise HorizontalWrap — otherwise it cannot
+// demonstrate the setting it was written to demonstrate.
+func TestSampleADR_OpensAndHasALongLine(t *testing.T) {
+	t.Parallel()
+	const p = "testdata/sample-adr.md"
+	app, err := New(DefaultConfig(), p, func() {})
+	if err != nil {
+		t.Fatalf("the sample ADR must open: %v", err)
+	}
+	body := app.editor.Value()
+	if !strings.Contains(body, "ADR-0001") {
+		t.Errorf("buffer does not look like the sample: %.60q", body)
+	}
+	longest := 0
+	for _, line := range strings.Split(body, "\n") {
+		if len(line) > longest {
+			longest = len(line)
+		}
+	}
+	// Wider than any sensible terminal, so wrap on/off is visibly different.
+	if longest < 120 {
+		t.Errorf("longest line is %d chars; the sample needs one long enough to "+
+			"show HorizontalWrap doing something", longest)
+	}
+}

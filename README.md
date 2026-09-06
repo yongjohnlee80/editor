@@ -13,12 +13,38 @@ A small modal text editor built on [golib/tui](https://github.com/yongjohnlee80/
 ## Build and run
 
 ```sh
-make build          # -> bin/editor
-make run FILE=x.md  # build and open x.md
+make build            # -> bin/editor
+make edit-sample      # open a scratch copy of the sample ADR
+make run FILE=x.md    # build and open x.md
+make version          # what the built binary reports
 ```
 
-`make` targets: `build`, `run`, `test`, `vet`, `fmt`, `tidy`, `clean`.
-Every `cmd/*` directory becomes a binary in `bin/`; today that is `cmd/editor`.
+`make` targets: `build`, `run`, `sample`, `edit-sample`, `version`, `test`,
+`race`, `vet`, `fmt`, `tidy`, `clean`. Every `cmd/*` directory becomes a binary
+in `bin/`; today that is `cmd/editor`.
+
+`make sample` copies `testdata/sample-adr.md` to `bin/sample-adr.md`. Because
+`bin/` is gitignored, that copy is a build artifact: edit it, save it, delete
+it — the tracked original is untouched. It carries a 234-character line on
+purpose, so toggling `HorizontalWrap` visibly changes something.
+
+## Command line
+
+```
+editor [FILE]                     open FILE, or an unnamed buffer
+editor open [-config PATH] [FILE] the same, spelled explicitly
+editor version                    version, commit and a greeting
+editor --version                  the same
+editor help [verb]                details for a verb
+```
+
+Commands follow the `lm/cmd/cli-v2` shape — one `Cmd*` type per verb registered
+with `google/subcommands`, sharing flags through an embedded `Base`. A bare
+argument that is not a verb is treated as a filename, so the common case needs
+no verb; the verb set is read back from the commander rather than hard-coded, so
+adding a verb cannot forget to teach the filename check about it.
+
+`-config` works both before and after the verb, and the verb-level one wins.
 
 ## Using it
 
@@ -62,12 +88,10 @@ LeaderKey = " "
 `editor.example.toml` states the defaults, and a test asserts it stays in sync
 with them.
 
-The parser is a **deliberately small subset of TOML** — sections, `key = value`,
-booleans, quoted strings, `#` comments — chosen so the editor has no dependency
-beyond golib. It is strict: an unknown section or key is a startup error rather
-than a silent skip, because a setting that looks applied and is not is worse
-than a refusal. If the config ever needs arrays, nested tables or datetimes,
-swap in a real TOML library rather than growing this one.
+Parsing is `BurntSushi/toml`, decoded **onto** the defaults, so a file that sets
+one key leaves the others alone. It is **strict**: an unknown key or section is a
+startup error rather than a silent skip, because a setting that looks applied and
+is not is worse than a refusal.
 
 ## Tests
 
