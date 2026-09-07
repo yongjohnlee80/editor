@@ -168,3 +168,34 @@ Terminal UIs lack CSS-style `z-index`. `widget.OverlayHost` solves multi-layer r
 - **Z-Ordering**: Embedding `*tui.Stack`, any layers added to `host` render on top of the editor and receive input events in reverse order (top-most layer intercepts input first).
 - **Bus Handshake**: Listens to `overlayOpenEvent` and `overlayCloseEvent` on the bus. Child widgets (such as dropdowns, fuzzy finders, or selection lists) can emit an open event anywhere in the tree, and `OverlayHost` automatically mounts the popup at the root level without requiring explicit plumbing through parent widgets.
 - **Modal Attachment**: Provides the attachment anchor for `widget.Float` dialogs (e.g. confirmation prompts, search modals), which can be displayed and dismissed without disturbing the underlying editor geometry.
+
+---
+
+## 5. ANSI-16 Palette Reference
+
+`golib/tui` follows an **ANSI-16-first** philosophy ([ADR-0006](file:///home/johno/go/pkg/mod/github.com/yongjohnlee80/golib@v0.5.12/docs/tui/adr-0006-styling-tokens-and-theming.md)). `style.ANSI(n)` accepts indices `0` through `15`, which map directly to standard terminal palette colors and SGR escape codes:
+
+| Index | Color Name | FG SGR | BG SGR | Reference Hex | Typical Role / Semantic |
+|---|---|---|---|---|---|
+| **0** | Black | `30` | `40` | `#000000` | Terminal backdrop / dark base |
+| **1** | Red | `31` | `41` | `#CD0000` | Errors, deletions, warnings |
+| **2** | Green | `32` | `42` | `#00CD00` | Success, additions, strings |
+| **3** | Yellow | `33` | `43` | `#CDCD00` | Warnings, search highlights |
+| **4** | Blue | `34` | `44` | `#0000EE` | Mode badges (`COMMAND:`), primary |
+| **5** | Magenta | `35` | `45` | `#CD00CD` | Keywords, special symbols |
+| **6** | Cyan | `36` | `46` | `#00CDCD` | Functions, identifiers, links |
+| **7** | White | `37` | `47` | `#E5E5E5` | Default foreground / light gray |
+| **8** | Bright Black | `90` | `100` | `#7F7F7F` | Muted text, line numbers, borders |
+| **9** | Bright Red | `91` | `101` | `#FF0000` | Critical alerts, bright errors |
+| **10** | Bright Green | `92` | `102` | `#00FF00` | Active diff adds, bright success |
+| **11** | Bright Yellow | `93` | `103` | `#FFFF00` | Cursor line, active highlights |
+| **12** | Bright Blue | `94` | `104` | `#5C5CFF` | Directory names, selection |
+| **13** | Bright Magenta | `95` | `105` | `#FF00FF` | Types, constants, numbers |
+| **14** | Bright Cyan | `96` | `106` | `#00FFFF` | Preprocessor, regex groups |
+| **15** | Bright White | `97` | `107` | `#FFFFFF` | Emphasized text, badge text |
+
+### Key Properties
+- **No Unsolicited Upsampling**: `style.ANSI(n)` always emits standard ANSI SGR codes so that the user's terminal emulator palette, contrast settings, and colorblind profiles are respected.
+- **Background vs. Foreground**: Setting `.Background(style.ANSI(n))` emits SGR `40+n` (or `100+(n-8)` for brights); setting `.Foreground(style.ANSI(n))` emits SGR `30+n` (or `90+(n-8)` for brights).
+- **Validation**: Calling `style.ANSI(n)` with `n < 0 || n > 15` panics immediately at construction to fail misconfigurations fast.
+
