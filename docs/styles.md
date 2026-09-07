@@ -8,6 +8,7 @@ This guide covers how styling works in [`golib/tui/style`](https://github.com/yo
 
 1. **Immutable Value Semantics**:
    A `style.Style` is an immutable struct value. Calling any setter (e.g. `.Foreground(...)`, `.Bold(...)`) returns a new copy with that property set. Instances never alias or leak state across components:
+
    ```go
    base := style.New().Foreground(style.ANSI(7))
    errorSt := base.Background(style.ANSI(1)).Bold(true) // 'base' remains untouched
@@ -25,13 +26,13 @@ This guide covers how styling works in [`golib/tui/style`](https://github.com/yo
 
 Colors in `golib/tui` are represented by the `style.Color` sum type:
 
-| Constructor | Usage | Example | When to Use |
-|---|---|---|---|
-| `style.ANSI(0-15)` | Standard 16-color ANSI palette | `style.ANSI(4)` *(Blue)* | **Default choice**. Respects user's terminal theme. |
-| `style.ANSI256(0-255)` | Extended 256-color palette | `style.ANSI256(214)` *(Orange)* | Specific extended terminal colors. |
-| `style.RGB(r, g, b)` | 24-bit TrueColor | `style.RGB(255, 128, 0)` | Fixed, theme-independent branding or gradients. |
-| `style.Adaptive(light, dark)` | Dynamic light/dark pair | `style.Adaptive(style.ANSI(0), style.ANSI(15))` | Adaptive interfaces matching terminal background. |
-| `style.Default()` | Terminal default color | `style.Default()` | Unsets color override back to default. |
+| Constructor                   | Usage                          | Example                                         | When to Use                                         |
+| ----------------------------- | ------------------------------ | ----------------------------------------------- | --------------------------------------------------- |
+| `style.ANSI(0-15)`            | Standard 16-color ANSI palette | `style.ANSI(4)` _(Blue)_                        | **Default choice**. Respects user's terminal theme. |
+| `style.ANSI256(0-255)`        | Extended 256-color palette     | `style.ANSI256(214)` _(Orange)_                 | Specific extended terminal colors.                  |
+| `style.RGB(r, g, b)`          | 24-bit TrueColor               | `style.RGB(255, 128, 0)`                        | Fixed, theme-independent branding or gradients.     |
+| `style.Adaptive(light, dark)` | Dynamic light/dark pair        | `style.Adaptive(style.ANSI(0), style.ANSI(15))` | Adaptive interfaces matching terminal background.   |
+| `style.Default()`             | Terminal default color         | `style.Default()`                               | Unsets color override back to default.              |
 
 > [!NOTE]
 > `style.ANSI(n)` panics if `n < 0 || n > 15` to catch configuration typos immediately at startup.
@@ -40,24 +41,24 @@ Colors in `golib/tui` are represented by the `style.Color` sum type:
 
 ## 3. ANSI-16 Palette Reference
 
-| Index | Color Name | FG SGR | BG SGR | Reference Hex | Typical Role / Semantic |
-|---|---|---|---|---|---|
-| **`0`** | **Black** | `30` | `40` | `#000000` | Terminal backdrop / dark base |
-| **`1`** | **Red** | `31` | `41` | `#CD0000` | Errors, deletions, refutations |
-| **`2`** | **Green** | `32` | `42` | `#00CD00` | Success indicators, additions, strings |
-| **`3`** | **Yellow** | `33` | `43` | `#CDCD00` | Warnings, search highlights |
-| **`4`** | **Blue** | `34` | `44` | `#0000EE` | Mode badges (`COMMAND:`), primary accent |
-| **`5`** | **Magenta** | `35` | `45` | `#CD00CD` | Keywords, special symbols |
-| **`6`** | **Cyan** | `36` | `46` | `#00CDCD` | Functions, identifiers, links |
-| **`7`** | **White** | `37` | `47` | `#E5E5E5` | Standard light gray / text foreground |
-| **`8`** | **Bright Black** (Gray) | `90` | `100` | `#7F7F7F` | Muted text, line numbers, borders |
-| **`9`** | **Bright Red** | `91` | `101` | `#FF0000` | Critical alerts, compiler errors |
-| **`10`** | **Bright Green** | `92` | `102` | `#00FF00` | Active diff additions |
-| **`11`** | **Bright Yellow** | `93` | `103` | `#FFFF00` | Cursor line highlights, active search match |
-| **`12`** | **Bright Blue** | `94` | `104` | `#5C5CFF` | Directory listings, selection fills |
-| **`13`** | **Bright Magenta** | `95` | `105` | `#FF00FF` | Types, constants, numbers |
-| **`14`** | **Bright Cyan** | `96` | `106` | `#00FFFF` | Preprocessor directives, regex groups |
-| **`15`** | **Bright White** | `97` | `107` | `#FFFFFF` | Emphasized text, high-contrast badges |
+| Index    | Color Name              | FG SGR | BG SGR | Reference Hex | Typical Role / Semantic                     |
+| -------- | ----------------------- | ------ | ------ | ------------- | ------------------------------------------- |
+| **`0`**  | **Black**               | `30`   | `40`   | `#000000`     | Terminal backdrop / dark base               |
+| **`1`**  | **Red**                 | `31`   | `41`   | `#CD0000`     | Errors, deletions, refutations              |
+| **`2`**  | **Green**               | `32`   | `42`   | `#00CD00`     | Success indicators, additions, strings      |
+| **`3`**  | **Yellow**              | `33`   | `43`   | `#CDCD00`     | Warnings, search highlights                 |
+| **`4`**  | **Blue**                | `34`   | `44`   | `#0000EE`     | Mode badges (`COMMAND:`), primary accent    |
+| **`5`**  | **Magenta**             | `35`   | `45`   | `#CD00CD`     | Keywords, special symbols                   |
+| **`6`**  | **Cyan**                | `36`   | `46`   | `#00CDCD`     | Functions, identifiers, links               |
+| **`7`**  | **White**               | `37`   | `47`   | `#E5E5E5`     | Standard light gray / text foreground       |
+| **`8`**  | **Bright Black** (Gray) | `90`   | `100`  | `#7F7F7F`     | Muted text, line numbers, borders           |
+| **`9`**  | **Bright Red**          | `91`   | `101`  | `#FF0000`     | Critical alerts, compiler errors            |
+| **`10`** | **Bright Green**        | `92`   | `102`  | `#00FF00`     | Active diff additions                       |
+| **`11`** | **Bright Yellow**       | `93`   | `103`  | `#FFFF00`     | Cursor line highlights, active search match |
+| **`12`** | **Bright Blue**         | `94`   | `104`  | `#5C5CFF`     | Directory listings, selection fills         |
+| **`13`** | **Bright Magenta**      | `95`   | `105`  | `#FF00FF`     | Types, constants, numbers                   |
+| **`14`** | **Bright Cyan**         | `96`   | `106`  | `#00FFFF`     | Preprocessor directives, regex groups       |
+| **`15`** | **Bright White**        | `97`   | `107`  | `#FFFFFF`     | Emphasized text, high-contrast badges       |
 
 ---
 
