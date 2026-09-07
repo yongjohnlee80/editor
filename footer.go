@@ -11,8 +11,8 @@ const commandPrompt = "COMMAND: "
 
 // commandPromptStyle styles the command prompt with a blue background and white text.
 var commandPromptStyle = style.New().
-	Background(style.ANSI(4)).
-	Foreground(style.ANSI(15))
+	Background(style.ANSI(6)).
+	Foreground(style.ANSI(0))
 
 // footer shows the status bar, or the command line while one is being typed.
 //

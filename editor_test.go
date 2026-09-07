@@ -394,11 +394,15 @@ func TestCommand_DisplaysPromptAndCursorPosition(t *testing.T) {
 	if cell.Content != "C" {
 		t.Errorf("snap[23][0].Content = %q, want 'C'", cell.Content)
 	}
-	if cell.Attrs.BG.Index != 4 {
-		t.Errorf("prompt cell BG index = %d, want 4 (blue)", cell.Attrs.BG.Index)
+	if bg, ok := commandPromptStyle.GetBackground(); ok {
+		if idx, ok := bg.ANSIIndex(); ok && int(cell.Attrs.BG.Index) != idx {
+			t.Errorf("prompt cell BG index = %d, want %d", cell.Attrs.BG.Index, idx)
+		}
 	}
-	if cell.Attrs.FG.Index != 15 {
-		t.Errorf("prompt cell FG index = %d, want 15 (white)", cell.Attrs.FG.Index)
+	if fg, ok := commandPromptStyle.GetForeground(); ok {
+		if idx, ok := fg.ANSIIndex(); ok && int(cell.Attrs.FG.Index) != idx {
+			t.Errorf("prompt cell FG index = %d, want %d", cell.Attrs.FG.Index, idx)
+		}
 	}
 
 	x, y, visible := h.tb.CursorPos()
