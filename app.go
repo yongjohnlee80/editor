@@ -27,6 +27,82 @@ import (
 	"github.com/yongjohnlee80/golib/tui/widget"
 )
 
+// New builds the editor around an optional file. An empty path opens an unnamed
+// buffer, exactly as "vim" with no argument does.
+//
+// A path that does not exist is NOT an error: it opens empty and ":w" creates
+// it. A path that exists but cannot be read IS an error, because silently
+// showing an empty buffer for a file that is there invites overwriting it.
+func New(cfg Config, path string, quit func()) (*App, error) {
+	a := &App{cfg: cfg, quit: quit, path: path}
+
+	wrap := widget.WrapNone
+	if cfg.Editor.HorizontalWrap {
+		// Soft wrap has no horizontal extent, so the Editor also stops
+		// drawing a horizontal scroll indicator — the hiding is a
+		// consequence of the wrap, not a second setting.
+		wrap = widget.WrapSoft
+	}
+	a.editor = widget.NewEditor(widget.WithEditorWrap(wrap))
+
+	if path != "" {
+		b, err := os.ReadFile(path)
+		switch {
+		case err == nil:
+			a.editor.SetValue(string(b))
+		case os.IsNotExist(err):
+			// A new file. Nothing to load, and ":w" will create it.
+		default:
+			return nil, errs.WrapCause(errs.ErrInvalidArgument, err,
+				"editor: opening %s", path)
+		}
+	}
+
+	// box is the main content area: the editor wrapped in a titled border.
+	// It occupies the bulk of the screen and shows the buffer filename (and a
+	// [+] dirty indicator) as its title.
+	a.box = widget.NewBox(a.editor, widget.WithTitle(a.title()))
+
+	// status is the three-segment status bar that lives in the footer:
+	// mode (NORMAL / INSERT) on the left, file path or transient message in
+	// the centre, and a wall clock on the right.
+	a.status = widget.NewStatusBar()
+
+	// cmdPrompt is the static ":" label that appears to the left of the
+	// command-line input when the user enters command mode (e.g. ":w", ":q").
+	a.cmdPrompt = widget.NewText(commandPrompt, widget.WithTextStyle(commandPromptStyle))
+
+	// cmdIn is the text input field that receives the command string typed
+	// after the ":" prompt in command mode.
+	a.cmdIn = widget.NewTextInput()
+
+	// footer composes the status bar, command prompt, and command input into
+	// a single strip. In normal mode it shows the status bar; in command mode
+	// it replaces the status segments with the prompt + input pair.
+	a.footer = &footer{status: a.status, prompt: a.cmdPrompt, input: a.cmdIn}
+
+	// dock is the top-level layout container. It describes the screen from
+	// the outside in:
+	//   ┌─ OverlayHost (modal layer) ──────────────────┐
+	//   │  ┌─ Dock ──────────────────────────────────┐ │
+	//   │  │  box (editor + border)   ← fills centre │ │
+	//   │  │──────────────────────────────────────────│ │
+	//   │  │  footer (status / cmd)   ← pinned bottom │ │
+	//   │  └─────────────────────────────────────────-┘ │
+	//   └──────────────────────────────────────────────-┘
+	// The footer is pinned to the bottom edge; the box expands to fill the
+	// remaining space above it.
+	dock := tui.NewDock()
+	dock.Pin(tui.DockBottom, a.footer)
+	dock.Add(a.box)
+
+	// host wraps the dock in an OverlayHost so that modal widgets (e.g. a
+	// file-picker or confirmation dialog) have a surface to attach to on top
+	// of the rest of the UI without disturbing the layout below.
+	a.host = widget.NewOverlayHost(dock)
+	return a, nil
+}
+
 // App is the root component. Build it with [New] and hand it to tui.NewApp.
 // It implements [tui.Component] (Init, Layout, Render, HandleEvent), which
 // the golib/tui application loop mounts and drives as the root of the UI tree.
