@@ -138,8 +138,10 @@ App (root tui.Component)
          │   └─ editor (*widget.Editor)  [vi buffer & editing state]
          │
          └─ Bottom (Pinned): footer (*footer)
-             ├─ status (*widget.StatusBar)  [NORMAL  file.txt  14:22:00]
-             └─ cmdIn (*widget.TextInput)   [:w file.txt]
+             ├─ status (*widget.StatusBar)        [NORMAL  file.txt  14:22:00]
+             └─ commanding mode:
+                 ├─ cmdPrompt (*widget.Text)      [COMMAND: ]
+                 └─ cmdIn (*widget.TextInput)     [:w file.txt]
 ```
 
 ### Component Roles
@@ -150,11 +152,13 @@ App (root tui.Component)
    Wraps the editor with an in-border title. It renders the file path and dirty indicator `[+]`. Focus transitions automatically highlight the border using theme tokens.
 3. **`status *widget.StatusBar`**:
    A 3-section status line pinned at the bottom: mode indicator on the left, file path or transient feedback message in the center, and wall clock on the right.
-4. **`cmdIn *widget.TextInput`**:
-   The ex-command input line. When the user presses `:` in Normal mode, `openCommand` shows this input and directs focus to it.
-5. **`footer *footer`**:
-   A custom layout component that holds both `status` and `cmdIn`. **Crucially, it keeps both mounted at all times**; it simply toggles which child is laid out and visible. Keeping both mounted preserves `NodeID`s so event subscriptions (like `SubmitEvent`) never disconnect.
-6. **`host *widget.OverlayHost`**:
+4. **`cmdPrompt *widget.Text`**:
+   A static label component displaying `"COMMAND: "` to the left of the command input and cursor.
+5. **`cmdIn *widget.TextInput`**:
+   The single-line text input for ex commands. When the user presses `:` in Normal mode, `openCommand` opens the command line and directs focus to it. Pressing `<Esc>` cancels command mode, restores focus to the editor, and reverts the footer to the status bar.
+6. **`footer *footer`**:
+   A custom layout component managing `status`, `cmdPrompt`, and `cmdIn`. **Crucially, all children stay mounted at all times**; it toggles whether the status bar or the command prompt and input are laid out and visible. Keeping children mounted preserves `NodeID`s so event subscriptions (like `SubmitEvent`) never disconnect.
+7. **`host *widget.OverlayHost`**:
    Wraps the dock layout as its bottom layer.
 
 ### Deep Dive: What `OverlayHost` Does

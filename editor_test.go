@@ -104,19 +104,21 @@ func newHarness(t *testing.T, cfg Config, path string) *harness {
 	return h
 }
 
-// settle waits for the loop to go quiet. Polling a flush count rather than
-// sleeping a fixed time keeps this from being a race that passes on a fast
-// machine.
 func (h *harness) settle() {
 	h.t.Helper()
-	last := -1
-	for i := 0; i < 200; i++ {
-		n := h.tb.Flushes()
-		if n == last {
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		h.read(func() {})
+		h.read(func() {})
+		f := h.tb.Flushes()
+		time.Sleep(20 * time.Millisecond)
+		h.read(func() {})
+		if h.tb.Flushes() == f {
 			return
 		}
-		last = n
-		time.Sleep(5 * time.Millisecond)
+		if time.Now().After(deadline) {
+			h.t.Fatalf("frame activity did not settle within 3s")
+		}
 	}
 }
 
