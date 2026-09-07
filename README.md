@@ -108,5 +108,5 @@ reading it directly is a data race, and the race detector says so.
 
 ## Architecture & Tutorial Guides
 
-- [`doc/architecture.md`](doc/architecture.md): In-depth walkthrough of the editor's design, component lifecycles, `tui.Component` vs. `tui/widget`, the Flutter-style layout engine, and modal overlays.
-- [`doc/styles.md`](doc/styles.md): Complete guide and reference for `golib/tui/style`, including the ANSI-16 color palette, typography attributes, and patterns for rendering styled colored text.
+- [`docs/architecture.md`](docs/architecture.md): In-depth walkthrough of the editor's design, component lifecycles, `tui.Component` vs. `tui/widget`, the Flutter-style layout engine, and modal overlays.
+- [`docs/styles.md`](docs/styles.md): Complete guide and reference for `golib/tui/style`, including the ANSI-16 color palette, typography attributes, and patterns for rendering styled colored text.
