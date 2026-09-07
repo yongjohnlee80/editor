@@ -105,3 +105,7 @@ binary refuses to start without a terminal, so those tests are the only place
 the wiring is actually observed rather than assumed. App state is loop-owned, so
 the harness reads it through `App.Update`, which runs on the loop goroutine;
 reading it directly is a data race, and the race detector says so.
+
+## Architecture & Tutorial Guide
+
+For an in-depth walkthrough of the editor's design, component lifecycles, `tui.Component` vs. `tui/widget`, the Flutter-style layout engine, and modal overlays, see [`doc/architecture.md`](doc/architecture.md).

@@ -140,6 +140,14 @@ func (h *harness) enter() {
 	h.settle()
 }
 
+func (h *harness) escape() {
+	h.t.Helper()
+	if err := h.tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEscape}); err != nil {
+		h.t.Fatalf("Inject Escape: %v", err)
+	}
+	h.settle()
+}
+
 // A file that exists loads into the buffer.
 func TestNew_LoadsAnExistingFile(t *testing.T) {
 	dir := t.TempDir()
@@ -339,3 +347,73 @@ func TestSampleADR_OpensAndHasALongLine(t *testing.T) {
 			"show HorizontalWrap doing something", longest)
 	}
 }
+
+// Esc cancels the command line, restores focus to the editor, and reverts the footer.
+func TestCommand_EscapeCancelsCommandLine(t *testing.T) {
+	h := newHarness(t, DefaultConfig(), "")
+
+	h.typeText(":")
+	if !h.commanding() {
+		t.Fatal(`":" did not open the command line`)
+	}
+	h.typeText("w")
+	if got := h.cmdValue(); got != "w" {
+		t.Fatalf("cmd input = %q, want %q", got, "w")
+	}
+
+	h.escape()
+	if h.commanding() {
+		t.Error("Esc must close the command line")
+	}
+	if got := h.cmdValue(); got != "" {
+		t.Errorf("cmd input after Esc = %q, want empty", got)
+	}
+	if got := h.mode(); got != "NORMAL" {
+		t.Errorf("mode after Esc = %q, want NORMAL", got)
+	}
+}
+
+// The command line displays "COMMAND: " on the left side of the cursor when opened.
+func TestCommand_DisplaysPromptAndCursorPosition(t *testing.T) {
+	h := newHarness(t, DefaultConfig(), "")
+
+	h.typeText(":")
+	if !h.commanding() {
+		t.Fatal(`":" did not open the command line`)
+	}
+
+	rendered := h.tb.String()
+	if !strings.Contains(rendered, "COMMAND:") {
+		t.Fatalf("bottom line did not display COMMAND: prompt; screen:\n%s", rendered)
+	}
+
+	x, y, visible := h.tb.CursorPos()
+	if !visible {
+		t.Fatal("cursor must be visible in command line")
+	}
+	wantX := len("COMMAND: ")
+	if x != wantX {
+		t.Errorf("cursor X = %d, want %d (on the right of %q)", x, wantX, "COMMAND: ")
+	}
+	if y != 23 {
+		t.Errorf("cursor Y = %d, want 23 (bottom line)", y)
+	}
+
+	// Typing a character advances the cursor past the prompt.
+	h.typeText("q")
+	x2, _, _ := h.tb.CursorPos()
+	if x2 != wantX+1 {
+		t.Errorf("cursor X after typing = %d, want %d", x2, wantX+1)
+	}
+
+	// Esc exits and restores the status bar.
+	h.escape()
+	if h.commanding() {
+		t.Fatal("Esc did not close the command line")
+	}
+	restored := h.tb.String()
+	if !strings.Contains(restored, "NORMAL") {
+		t.Errorf("status bar was not restored after Esc; screen:\n%s", restored)
+	}
+}
+
