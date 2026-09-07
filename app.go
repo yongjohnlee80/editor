@@ -77,7 +77,10 @@ type App struct {
 	// path is empty for a buffer that has never been written. That is the
 	// state ":w" has to prompt about, so it is tracked rather than inferred
 	// from an empty filename at save time.
-	path  string
+	path string
+
+	// dirty is true if the buffer has been modified since the last save. It is
+	// flagged by the editor and used to update the box title and prompt for confirmation
 	dirty bool
 
 	// message is the transient text the footer shows instead of the file path:
@@ -111,12 +114,16 @@ func (a *App) Init(ctx *tui.Context) {
 			a.refresh()
 		}
 	})
+	// CHANGE marks the buffer dirty and refreshes the status line after the
+	// editor accepts an edit.
 	tui.SubscribeScoped(ctx, func(ev widget.ChangeEvent) {
 		if ev.Owner == a.editor.NodeID() {
 			a.dirty = true
 			a.refresh()
 		}
 	})
+	// SUBMIT belongs to the command input; its value is dispatched as an editor
+	// command rather than inserted into the active buffer.
 	tui.SubscribeScoped(ctx, func(ev widget.SubmitEvent) {
 		if ev.Owner == a.cmdIn.NodeID() {
 			a.runCommand(ev.Value)
