@@ -41,7 +41,7 @@ func New(cfg Config, path string, quit func()) (*App, error) {
 
 	a.box = widget.NewBox(a.editor, widget.WithTitle(a.title()))
 	a.status = widget.NewStatusBar()
-	a.cmdPrompt = widget.NewText(commandPrompt)
+	a.cmdPrompt = widget.NewText(commandPrompt, widget.WithTextStyle(commandPromptStyle))
 	a.cmdIn = widget.NewTextInput()
 	a.footer = &footer{status: a.status, prompt: a.cmdPrompt, input: a.cmdIn}
 

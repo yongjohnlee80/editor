@@ -389,6 +389,18 @@ func TestCommand_DisplaysPromptAndCursorPosition(t *testing.T) {
 		t.Fatalf("bottom line did not display COMMAND: prompt; screen:\n%s", rendered)
 	}
 
+	snap := h.tb.Snapshot()
+	cell := snap[23][0] // first character 'C' of "COMMAND: "
+	if cell.Content != "C" {
+		t.Errorf("snap[23][0].Content = %q, want 'C'", cell.Content)
+	}
+	if cell.Attrs.BG.Index != 4 {
+		t.Errorf("prompt cell BG index = %d, want 4 (blue)", cell.Attrs.BG.Index)
+	}
+	if cell.Attrs.FG.Index != 15 {
+		t.Errorf("prompt cell FG index = %d, want 15 (white)", cell.Attrs.FG.Index)
+	}
+
 	x, y, visible := h.tb.CursorPos()
 	if !visible {
 		t.Fatal("cursor must be visible in command line")
