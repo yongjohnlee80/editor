@@ -153,7 +153,7 @@ App (root tui.Component)
 3. **`status *widget.StatusBar`**:
    A 3-section status line pinned at the bottom: mode indicator on the left, file path or transient feedback message in the center, and wall clock on the right.
 4. **`cmdPrompt *widget.Text`**:
-   A static label component displaying `"COMMAND: "` to the left of the command input and cursor.
+   A static label component displaying `"COMMAND: "` to the left of the command input and cursor, styled with a blue background (`style.ANSI(4)`) and white text (`style.ANSI(15)`).
 5. **`cmdIn *widget.TextInput`**:
    The single-line text input for ex commands. When the user presses `:` in Normal mode, `openCommand` opens the command line and directs focus to it. Pressing `<Esc>` cancels command mode, restores focus to the editor, and reverts the footer to the status bar.
 6. **`footer *footer`**:

@@ -9,6 +9,11 @@ import (
 // commandPrompt is displayed on the left side of the command line cursor.
 const commandPrompt = "COMMAND: "
 
+// commandPromptStyle styles the command prompt with a blue background and white text.
+var commandPromptStyle = style.New().
+	Background(style.ANSI(4)).
+	Foreground(style.ANSI(15))
+
 // footer shows the status bar, or the command line while one is being typed.
 //
 // All children stay MOUNTED and only the active mode is laid out, rather than mounting and
@@ -26,7 +31,7 @@ func (f *footer) Init(ctx *tui.Context) {
 	f.ctx = ctx
 	ctx.Mount(f.status)
 	if f.prompt == nil {
-		f.prompt = widget.NewText(commandPrompt)
+		f.prompt = widget.NewText(commandPrompt, widget.WithTextStyle(commandPromptStyle))
 	}
 	ctx.Mount(f.prompt)
 	ctx.Mount(f.input)
