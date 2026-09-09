@@ -11,10 +11,15 @@ import (
 	"github.com/yongjohnlee80/golib/tui"
 )
 
-// These drive the real component tree over tui.TestBackend — no PTY. That
-// matters here more than usual: the binary cannot be exercised in CI at all
-// (it refuses to start without a terminal), so this is the only place the
+// These tests drive the real component tree over tui.TestBackend — no PTY.
+// That matters here more than usual: the binary cannot be exercised in CI at
+// all (it refuses to start without a terminal), so this is the only place the
 // wiring is actually observed rather than assumed.
+//
+// Tests that belong to the document layer (file loading, write, dirty flag)
+// live in com-editor_test.go and call newEditorPane directly, keeping this
+// file focused on App orchestration: the command lifecycle, key routing,
+// footer behaviour, and status bar.
 
 type harness struct {
 	t    *testing.T
@@ -63,21 +68,21 @@ func (h *harness) message() string {
 func (h *harness) cmdValue() string {
 	h.t.Helper()
 	var v string
-	h.read(func() { v = h.app.cmdIn.Value() })
+	h.read(func() { v = h.app.footer.CommandValue() })
 	return v
 }
 
 func (h *harness) path() string {
 	h.t.Helper()
 	var v string
-	h.read(func() { v = h.app.path })
+	h.read(func() { v = h.app.editorPane.path })
 	return v
 }
 
 func (h *harness) mode() string {
 	h.t.Helper()
 	var v string
-	h.read(func() { v = h.app.editor.Mode().String() })
+	h.read(func() { v = h.app.editorPane.editor.Mode().String() })
 	return v
 }
 
@@ -148,49 +153,6 @@ func (h *harness) escape() {
 		h.t.Fatalf("Inject Escape: %v", err)
 	}
 	h.settle()
-}
-
-// A file that exists loads into the buffer.
-func TestNew_LoadsAnExistingFile(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "notes.md")
-	if err := os.WriteFile(p, []byte("hello\nworld\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	app, err := New(DefaultConfig(), p, func() {})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := app.editor.Value(); !strings.Contains(got, "hello") {
-		t.Errorf("buffer = %q, want the file's contents", got)
-	}
-}
-
-// A path that does not exist opens EMPTY rather than failing: that is a new
-// file, and ":w" creates it.
-func TestNew_MissingPathIsANewFile(t *testing.T) {
-	app, err := New(DefaultConfig(), filepath.Join(t.TempDir(), "new.txt"), func() {})
-	if err != nil {
-		t.Fatalf("a missing path must open a new buffer, not fail: %v", err)
-	}
-	if got := app.editor.Value(); got != "" {
-		t.Errorf("buffer = %q, want empty", got)
-	}
-}
-
-// A path that exists but cannot be READ is an error. Showing an empty buffer
-// for a file that is there invites overwriting it.
-func TestNew_UnreadableFileIsAnError(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("running as root: mode 0 is still readable")
-	}
-	p := filepath.Join(t.TempDir(), "locked.txt")
-	if err := os.WriteFile(p, []byte("x"), 0o000); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := New(DefaultConfig(), p, func() {}); err == nil {
-		t.Error("an unreadable existing file must be an error")
-	}
 }
 
 // ":" opens the command line, and ":w" writes the buffer to disk.
@@ -294,23 +256,6 @@ func TestLeaderKey_OtherKeysDoNotOpenIt(t *testing.T) {
 	}
 }
 
-// HorizontalWrap reaches the Editor. Asserted through the app's own config
-// rather than the widget's private state, and paired with the off case so the
-// test cannot pass for a hard-coded mode.
-func TestConfig_HorizontalWrapReachesTheEditor(t *testing.T) {
-	for _, wrap := range []bool{false, true} {
-		cfg := DefaultConfig()
-		cfg.Editor.HorizontalWrap = wrap
-		app, err := New(cfg, "", func() {})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if app.cfg.Editor.HorizontalWrap != wrap {
-			t.Errorf("HorizontalWrap = %v, want %v", app.cfg.Editor.HorizontalWrap, wrap)
-		}
-	}
-}
-
 // The footer reports the Editor's mode rather than tracking its own copy.
 func TestFooter_ShowsTheEditorMode(t *testing.T) {
 	h := newHarness(t, DefaultConfig(), "")
@@ -320,33 +265,6 @@ func TestFooter_ShowsTheEditorMode(t *testing.T) {
 	h.typeText("i")
 	if got := h.mode(); got != "INSERT" {
 		t.Errorf("mode after i = %q, want INSERT", got)
-	}
-}
-
-// The sample ADR shipped for manual testing must actually open, and it must
-// contain a line long enough to exercise HorizontalWrap — otherwise it cannot
-// demonstrate the setting it was written to demonstrate.
-func TestSampleADR_OpensAndHasALongLine(t *testing.T) {
-	t.Parallel()
-	const p = "testdata/sample-adr.md"
-	app, err := New(DefaultConfig(), p, func() {})
-	if err != nil {
-		t.Fatalf("the sample ADR must open: %v", err)
-	}
-	body := app.editor.Value()
-	if !strings.Contains(body, "ADR-0001") {
-		t.Errorf("buffer does not look like the sample: %.60q", body)
-	}
-	longest := 0
-	for _, line := range strings.Split(body, "\n") {
-		if len(line) > longest {
-			longest = len(line)
-		}
-	}
-	// Wider than any sensible terminal, so wrap on/off is visibly different.
-	if longest < 120 {
-		t.Errorf("longest line is %d chars; the sample needs one long enough to "+
-			"show HorizontalWrap doing something", longest)
 	}
 }
 
@@ -435,3 +353,27 @@ func TestCommand_DisplaysPromptAndCursorPosition(t *testing.T) {
 	}
 }
 
+// ":e" opens an existing file into the active buffer and updates the title.
+func TestCommand_EditOpensFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "external.txt")
+	if err := os.WriteFile(p, []byte("loaded externally\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := newHarness(t, DefaultConfig(), "")
+
+	h.typeText(":")
+	h.typeText("e " + p)
+	h.enter()
+
+	if h.commanding() {
+		t.Error("the command line stayed open after submit")
+	}
+	if got := h.path(); got != p {
+		t.Errorf("path = %q, want %q after :e", got, p)
+	}
+	var val string
+	h.read(func() { val = h.app.editorPane.Value() })
+	if !strings.Contains(val, "loaded externally") {
+		t.Errorf("buffer value = %q, want 'loaded externally'", val)
+	}
+}

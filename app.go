@@ -16,13 +16,9 @@
 package editor
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
+	"errors"
 	"time"
 
-	"github.com/yongjohnlee80/golib/errs"
 	"github.com/yongjohnlee80/golib/tui"
 	"github.com/yongjohnlee80/golib/tui/widget"
 )
@@ -34,78 +30,62 @@ import (
 // it. A path that exists but cannot be read IS an error, because silently
 // showing an empty buffer for a file that is there invites overwriting it.
 func New(cfg Config, path string, quit func()) (*App, error) {
-	a := &App{cfg: cfg, quit: quit, path: path}
+	a := &App{cfg: cfg, quit: quit}
 
-	wrap := widget.WrapNone
-	if cfg.Editor.HorizontalWrap {
-		// Soft wrap has no horizontal extent, so the Editor also stops
-		// drawing a horizontal scroll indicator — the hiding is a
-		// consequence of the wrap, not a second setting.
-		wrap = widget.WrapSoft
+	// Construct pure key resolver configured with the validated LeaderKey.
+	resolver := NewDefaultKeyResolver(cfg.Keyboard.LeaderKey)
+	sink := a.handleKeyAction
+
+	var err error
+	a.editorPane, err = newEditorPane(cfg, path, resolver, sink)
+	if err != nil {
+		return nil, err
 	}
-	a.editor = widget.NewEditor(widget.WithEditorWrap(wrap))
-
-	if path != "" {
-		b, err := os.ReadFile(path)
-		switch {
-		case err == nil:
-			a.editor.SetValue(string(b))
-		case os.IsNotExist(err):
-			// A new file. Nothing to load, and ":w" will create it.
-		default:
-			return nil, errs.WrapCause(errs.ErrInvalidArgument, err,
-				"editor: opening %s", path)
-		}
-	}
-
-	// box is the main content area: the editor wrapped in a titled border.
-	// It occupies the bulk of the screen and shows the buffer filename (and a
-	// [+] dirty indicator) as its title.
-	a.box = widget.NewBox(a.editor, widget.WithTitle(a.title()))
-
-	// status is the three-segment status bar that lives in the footer:
-	// mode (NORMAL / INSERT) on the left, file path or transient message in
-	// the centre, and a wall clock on the right.
-	a.status = widget.NewStatusBar()
-
-	// cmdPrompt is the static ":" label that appears to the left of the
-	// command-line input when the user enters command mode (e.g. ":w", ":q").
-	a.cmdPrompt = widget.NewText(commandPrompt, widget.WithTextStyle(commandPromptStyle))
-
-	// cmdIn is the text input field that receives the command string typed
-	// after the ":" prompt in command mode.
-	a.cmdIn = widget.NewTextInput()
 
 	// footer composes the status bar, command prompt, and command input into
 	// a single strip. In normal mode it shows the status bar; in command mode
 	// it replaces the status segments with the prompt + input pair.
-	a.footer = &footer{status: a.status, prompt: a.cmdPrompt, input: a.cmdIn}
+	a.footer, err = newFooter(resolver, sink)
+	if err != nil {
+		return nil, err
+	}
 
 	// dock is the top-level layout container. It describes the screen from
 	// the outside in:
 	//   ┌─ OverlayHost (modal layer) ──────────────────┐
 	//   │  ┌─ Dock ──────────────────────────────────┐ │
-	//   │  │  box (editor + border)   ← fills centre │ │
+	//   │  │  editorPane (editor + border) ← fills   │ │
 	//   │  │──────────────────────────────────────────│ │
 	//   │  │  footer (status / cmd)   ← pinned bottom │ │
 	//   │  └─────────────────────────────────────────-┘ │
 	//   └──────────────────────────────────────────────-┘
-	// The footer is pinned to the bottom edge; the box expands to fill the
-	// remaining space above it.
+	// The footer is pinned to the bottom edge; the editorPane expands to fill
+	// the remaining space above it.
 	dock := tui.NewDock()
 	dock.Pin(tui.DockBottom, a.footer)
-	dock.Add(a.box)
+	dock.Add(a.editorPane)
 
 	// host wraps the dock in an OverlayHost so that modal widgets (e.g. a
 	// file-picker or confirmation dialog) have a surface to attach to on top
 	// of the rest of the UI without disturbing the layout below.
 	a.host = widget.NewOverlayHost(dock)
+
+	// registry is the command registry mapping ex command verbs to Handlers.
+	a.registry = NewRegistry()
+	a.registerCommands()
+
 	return a, nil
 }
 
 // App is the root component. Build it with [New] and hand it to tui.NewApp.
 // It implements [tui.Component] (Init, Layout, Render, HandleEvent), which
 // the golib/tui application loop mounts and drives as the root of the UI tree.
+//
+// App is a thin orchestrator: it owns the layout shell (dock + overlay host),
+// the command-line lifecycle (open/close/run), and status-bar refresh. All
+// document-editing concerns (buffer text, file path, dirty state, file I/O)
+// live in EditorPane and the command registry; footer presentation and command
+// input live in Footer.
 type App struct {
 	// cfg holds user/distro configuration (e.g. soft wrapping, leader key).
 	cfg Config
@@ -117,31 +97,19 @@ type App struct {
 	// component's lifetime; used for layout, focus, and dirty notifications.
 	ctx *tui.Context
 
-	// editor is the core text buffer widget. It owns the vi modal editing state
-	// machine (Normal vs. Insert), cursor navigation, and buffer text mutations.
-	editor *widget.Editor
+	// editorPane owns the editor widget, box, file path, and dirty state.
+	// App interacts with it through a narrow surface: NodeID, Mode,
+	// MarkDirty, and title. EditorPane also implements Document for OS commands.
+	editorPane *EditorPane
 
-	// box wraps editor in a bordered frame with a title bar displaying the buffer
-	// filename and [+] dirty indicator.
-	box *widget.Box
-
-	// status renders the three-part status line at the bottom: mode on the left,
-	// file path or transient message in the center, and wall clock on the right.
-	status *widget.StatusBar
-
-	// cmdPrompt is the static label displayed on the left side of the cursor in commanding mode.
-	cmdPrompt *widget.Text
-
-	// cmdIn is the single-line text input for ex commands, shown when ":" is pressed.
-	cmdIn *widget.TextInput
-
-	// footer manages swapping between status and cmdIn at the bottom of the screen
-	// while keeping both mounted so NodeIDs and event subscriptions remain stable.
-	footer *footer
+	// footer manages swapping between status and command input at the bottom
+	// of the screen while keeping both mounted so NodeIDs and event subscriptions
+	// remain stable.
+	footer *Footer
 
 	// host is the root OverlayHost (embedding *tui.Stack) wrapping the main dock
-	// layout (box + footer) as its base layer. It acts as the z-stack anchor for
-	// popups, floats, and modal dialogs:
+	// layout (editorPane + footer) as its base layer. It acts as the z-stack anchor
+	// for popups, floats, and modal dialogs:
 	//   1. Z-ordering: upper layers paint on top of the base editor and receive input
 	//      events first (reverse order hit-testing).
 	//   2. Bus handshake: automatically listens for overlayOpenEvent and overlayCloseEvent
@@ -150,14 +118,8 @@ type App struct {
 	//      windows attach and unmount, restoring focus automatically upon close.
 	host *widget.OverlayHost
 
-	// path is empty for a buffer that has never been written. That is the
-	// state ":w" has to prompt about, so it is tracked rather than inferred
-	// from an empty filename at save time.
-	path string
-
-	// dirty is true if the buffer has been modified since the last save. It is
-	// flagged by the editor and used to update the box title and prompt for confirmation
-	dirty bool
+	// registry is the command registry mapping ex verbs (":w", ":e", ":q") to Handlers.
+	registry *Registry
 
 	// message is the transient text the footer shows instead of the file path:
 	// a write confirmation, or why a command was refused. Cleared on the next
@@ -165,50 +127,86 @@ type App struct {
 	message string
 }
 
+// registerCommands registers built-in ex commands in the command registry.
+func (a *App) registerCommands() {
+	// OS commands: file save (:w, :write) and file open (:e, :edit).
+	InitOSCommands(a.registry, a.editorPane)
+
+	// Quit command (:q).
+	quitCmd := Command[struct{}](func(_ *tui.Context, _ string) CommandResponse[struct{}] {
+		if a.editorPane.dirty {
+			return Refuse[struct{}](errors.New("unsaved changes — :q! to discard, :wq to save"))
+		}
+		a.quit()
+		return Ok(struct{}{})
+	})
+	a.registry.Add(Register(quitCmd, "quit editor"), "q", "quit")
+
+	// Force-quit command (:q!).
+	forceQuitCmd := Command[struct{}](func(_ *tui.Context, _ string) CommandResponse[struct{}] {
+		a.quit()
+		return Ok(struct{}{})
+	})
+	a.registry.Add(Register(forceQuitCmd, "quit without saving"), "q!")
+
+	// Write and quit (:wq).
+	writeCmd := NewWriteFileCmd(a.editorPane)
+	wqCmd := Command[string](func(ctx *tui.Context, arg string) CommandResponse[string] {
+		resp := writeCmd(ctx, arg)
+		if resp.Status() == StatusOK {
+			a.quit()
+		}
+		return resp
+	})
+	a.registry.Add(Register(wqCmd, "write and quit"), "wq")
+}
+
 // Init mounts the root component tree to the TUI context, subscribes to editor
 // mode and change events, wires the command line submit handler, starts the
 // 1-second status bar clock, and focuses the editor.
 //
-// Lifecycle:
+// # Lifecycle
+//
 // Init implements [tui.Component]. It is not called directly on *App; instead,
 // it is called via interface dispatch by the TUI framework on startup when the
-// root component is mounted (tui.NewApp(app).Run(ctx) -> mount(nil, a.root) -> comp.Init).
-// It runs exactly once before any Layout, Render, or HandleEvent calls. The passed
-// ctx is valid for the component's entire mounted lifetime and is retained in a.ctx.
+// root component is mounted (tui.NewApp(app).Run(ctx) → mount(nil, a.root) →
+// comp.Init). It runs exactly once before any Layout, Render, or HandleEvent
+// calls. The passed ctx is valid for the component's entire mounted lifetime
+// and is retained in a.ctx.
 //
-// app, err := editor.New(cfg, file, stop)
-// tui.NewApp(app, tui.WithBackend(backend)).Run(ctx)
+//	app, err := editor.New(cfg, file, stop)
+//	tui.NewApp(app, tui.WithBackend(backend)).Run(ctx)
 func (a *App) Init(ctx *tui.Context) {
 	a.ctx = ctx
 	ctx.Mount(a.host)
 
-	// MODE comes from the Editor rather than being tracked here: the widget
+	// MODE comes from the EditorPane rather than being tracked here: the widget
 	// owns the state machine, so mirroring it would be a second source of
 	// truth that can disagree.
 	tui.SubscribeScoped(ctx, func(ev widget.ModeChangedEvent) {
-		if ev.Owner == a.editor.NodeID() {
+		if ev.Owner == a.editorPane.NodeID() {
 			a.refresh()
 		}
 	})
 	// CHANGE marks the buffer dirty and refreshes the status line after the
 	// editor accepts an edit.
 	tui.SubscribeScoped(ctx, func(ev widget.ChangeEvent) {
-		if ev.Owner == a.editor.NodeID() {
-			a.dirty = true
+		if ev.Owner == a.editorPane.NodeID() {
+			a.editorPane.MarkDirty()
 			a.refresh()
 		}
 	})
 	// SUBMIT belongs to the command input; its value is dispatched as an editor
 	// command rather than inserted into the active buffer.
 	tui.SubscribeScoped(ctx, func(ev widget.SubmitEvent) {
-		if ev.Owner == a.cmdIn.NodeID() {
+		if ev.Owner == a.footer.InputNodeID() {
 			a.runCommand(ev.Value)
 		}
 	})
 	// The clock is a repeating TickEvent addressed to this node, so it costs
 	// nothing while idle and needs no goroutine of its own.
 	ctx.Every(time.Second)
-	ctx.FocusComponent(a.editor)
+	ctx.FocusComponent(a.editorPane)
 	a.refresh()
 }
 
@@ -224,141 +222,68 @@ func (a *App) Layout(c tui.Constraints) tui.Size {
 // entirely produced by its mounted child hierarchy (a.host).
 func (a *App) Render(tui.Surface) {}
 
-// HandleEvent handles periodic clock ticks to update the status line time and
-// intercepts normal-mode key events to trigger the command line.
+// HandleEvent handles periodic clock ticks to update the status line time.
+// All keyboard events are handled locally within focused components (EditorPane
+// and Footer) and dispatched to App synchronously via handleKeyAction.
 func (a *App) HandleEvent(ev tui.Event) bool {
-	switch t := ev.(type) {
+	switch ev.(type) {
 	case tui.TickEvent:
 		a.refresh()
 		return true
-	case tui.KeyEvent:
-		return a.handleKey(t)
 	}
 	return false
 }
 
-// handleKey opens the command line. Everything else is left to bubble, so the
-// Editor keeps every binding it publishes — this deliberately intercepts as
-// little as possible.
-func (a *App) handleKey(k tui.KeyEvent) bool {
-	if k.Kind == tui.KeyRelease {
-		return false
-	}
-	if a.footer.commanding {
-		if k.Code == tui.KeyEscape {
-			a.closeCommand()
-			return true
-		}
-		return false
-	}
-	// Only from Normal mode: in Insert, ":" and the leader are text.
-	if a.editor.Mode() != widget.ModeNormal {
-		return false
-	}
-	if k.Text == ":" || (a.cfg.Keyboard.LeaderKey != "" && k.Text == a.cfg.Keyboard.LeaderKey) {
+// handleKeyAction acts as the single application-level action coordinator,
+// executing cross-component focus and visibility transitions in response to
+// semantic KeyActions dispatched by focused components.
+func (a *App) handleKeyAction(action KeyAction) {
+	switch action {
+	case ActionOpenCommandLine:
 		a.openCommand("")
-		return true
+	case ActionCancelCommandLine:
+		a.closeCommand()
 	}
-	return false
 }
 
 // openCommand shows the command line, seeded with prefill. Esc cancels, which
 // bubbles from the focused TextInput to App.handleKey.
 func (a *App) openCommand(prefill string) {
 	a.message = ""
-	a.cmdIn.SetValue(prefill)
-	a.footer.commanding = true
-	a.ctx.FocusComponent(a.cmdIn)
-	a.ctx.RequestLayout()
+	a.footer.OpenCommand(prefill)
 	a.refresh()
 }
 
 // closeCommand hides the command input, clears its buffer, restores focus to the
 // editor, and requests layout and footer refreshes.
 func (a *App) closeCommand() {
-	a.footer.commanding = false
-	a.cmdIn.SetValue("")
-	a.ctx.FocusComponent(a.editor)
-	a.ctx.RequestLayout()
+	a.footer.CloseCommand()
+	a.ctx.FocusComponent(a.editorPane)
 	a.refresh()
 }
 
-// runCommand interprets one ex command. The vocabulary is deliberately tiny —
-// q, q!, w, wq, w <path> — and anything else is REFUSED by name rather than
-// ignored, so a typo says so instead of appearing to work.
+// runCommand interprets one ex command using the command registry.
 func (a *App) runCommand(line string) {
 	a.closeCommand()
-	cmd := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), ":"))
-	if cmd == "" {
-		return
-	}
-	verb, arg, _ := strings.Cut(cmd, " ")
-	arg = strings.TrimSpace(arg)
+	resp := a.registry.Dispatch(a.ctx, line)
 
-	switch verb {
-	case "q":
-		if a.dirty {
-			// vim's E37. Refusing beats discarding: the user can still
-			// force it, and nothing is lost by asking.
-			a.setMessage("unsaved changes — :q! to discard, :wq to save")
-			return
+	switch resp.Status() {
+	case StatusOK:
+		if s, ok := resp.Result().(string); ok && s != "" {
+			a.setMessage(s)
 		}
-		a.quit()
-	case "q!":
-		a.quit()
-	case "w", "wq":
-		if err := a.write(arg); err != nil {
-			a.setMessage(err.Error())
-			return
+	case StatusPromptNeeded:
+		prefill := ""
+		if s, ok := resp.Result().(string); ok {
+			prefill = s
 		}
-		if verb == "wq" {
-			a.quit()
-		}
-	default:
-		a.setMessage(fmt.Sprintf("not an editor command: %s", verb))
-	}
-}
-
-// write saves the buffer. With no path anywhere — neither an argument nor a
-// previous name — it PROMPTS by reopening the command line seeded with "w ",
-// which is where a vim user would type the name anyway.
-func (a *App) write(arg string) error {
-	path := arg
-	if path == "" {
-		path = a.path
-	}
-	if path == "" {
-		// openCommand CLEARS the message — correct for a fresh ":", wrong
-		// here — so the prompt is opened first and the reason set after it.
-		// The other order left the input seeded with "w " and no
-		// explanation of why.
-		a.openCommand("w ")
+		a.openCommand(prefill)
 		a.setMessage("new file: type a name after :w")
-		return nil
-	}
-	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return errs.WrapCause(errs.ErrInvalidArgument, err, "creating %s", dir)
+	case StatusRefused, StatusUnknown:
+		if resp.Err() != nil {
+			a.setMessage(resp.Err().Error())
 		}
 	}
-	body := a.editor.Value()
-	// A trailing newline, because a POSIX text file ends with one and every
-	// other tool that reads this file expects it.
-	if body != "" && !strings.HasSuffix(body, "\n") {
-		body += "\n"
-	}
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		return errs.WrapCause(errs.ErrInvalidArgument, err, "writing %s", path)
-	}
-	a.path = path
-	a.dirty = false
-	a.box.SetTitle(a.title())
-	lines := 0
-	if body != "" {
-		lines = strings.Count(body, "\n")
-	}
-	a.setMessage(fmt.Sprintf("%q %dL written", path, lines))
-	return nil
 }
 
 // setMessage updates the transient status line message and triggers a footer
@@ -374,25 +299,12 @@ func (a *App) refresh() {
 	if a.ctx == nil {
 		return
 	}
-	a.status.SetLeft(" " + a.editor.Mode().String() + " ")
-	centre := a.title()
+	modeStr := " " + a.editorPane.Mode().String() + " "
+	centre := a.editorPane.title()
 	if a.message != "" {
 		centre = a.message
 	}
-	a.status.SetCenter(centre)
-	a.status.SetRight(time.Now().Format("15:04:05") + " ")
+	timeStr := time.Now().Format("15:04:05") + " "
+	a.footer.SetStatus(modeStr, centre, timeStr)
 	a.ctx.MarkDirty()
-}
-
-// title returns the display title of the buffer for the enclosing box header,
-// showing "[No Name]" for an unnamed buffer and appending "[+]" when modified.
-func (a *App) title() string {
-	name := a.path
-	if name == "" {
-		name = "[No Name]"
-	}
-	if a.dirty {
-		name += " [+]"
-	}
-	return name
 }

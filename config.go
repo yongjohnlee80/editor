@@ -104,15 +104,8 @@ func Parse(r io.Reader) (Config, error) {
 
 // validate rejects values that decode fine but cannot work.
 func (c Config) validate() error {
-	// One key, because it is compared against a single keypress. A longer
-	// string would simply never match, which is a setting that looks applied
-	// and is not.
-	if n := len([]rune(c.Keyboard.LeaderKey)); n != 1 {
-		return errs.Wrap(errs.ErrInvalidArgument,
-			"keyboard.LeaderKey = %q: want exactly one character, got %d",
-			c.Keyboard.LeaderKey, n)
-	}
-	return nil
+	// Validate leader key syntax and collision with built-in vi bindings.
+	return ValidateLeaderKey(c.Keyboard.LeaderKey)
 }
 
 func plural(word string, n int) string {
