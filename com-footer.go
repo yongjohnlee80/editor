@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"github.com/yongjohnlee80/golib/errs"
 	"github.com/yongjohnlee80/golib/tui"
 	"github.com/yongjohnlee80/golib/tui/style"
 	"github.com/yongjohnlee80/golib/tui/widget"
@@ -18,7 +19,7 @@ var commandPromptStyle = style.New().
 	Background(style.ANSI(6)).
 	Foreground(style.ANSI(0))
 
-// footer is the single-row strip pinned to the bottom of the Dock. It renders
+// Footer is the single-row strip pinned to the bottom of the Dock. It renders
 // in one of two visual modes, toggled by the commanding flag:
 //
 // Normal mode — shows the three-segment status bar:
@@ -48,9 +49,9 @@ var commandPromptStyle = style.New().
 // original NodeID of the TextInput — causing submitted commands to be silently
 // dropped.
 //
-// # Why App.Init owns the SubmitEvent subscription (not footer.Init)
+// # Why App.Init owns the SubmitEvent subscription (not Footer.Init)
 //
-// footer.Init *could* subscribe to events using its own ctx — the API is
+// Footer.Init *could* subscribe to events using its own ctx — the API is
 // identical: tui.SubscribeScoped(ctx, func(ev SomeEvent) { … }). Any
 // component that has a *tui.Context in hand can call SubscribeScoped and
 // the subscription will be torn down automatically when that component is
@@ -58,22 +59,61 @@ var commandPromptStyle = style.New().
 //
 // The SubmitEvent subscription deliberately lives in App.Init instead because
 // the handler needs to call a.runCommand(ev.Value), which is App-level logic
-// (command parsing, file writes, quit). Putting that handler in footer.Init
+// (command parsing, file writes, quit). Putting that handler in Footer.Init
 // would require passing a callback into footer at construction time, or giving
 // footer a reference back to App — both of which tangle the dependency graph
 // unnecessarily. Keeping the subscription in App.Init keeps footer a pure
 // layout shell with no knowledge of command semantics.
-type footer struct {
-	ctx    *tui.Context
+type Footer struct {
+	// ctx is the mounted framework context retained from Init. Valid for the
+	// component's lifetime; used to lay out and place the child widgets.
+	ctx *tui.Context
+
+	// status is the three-segment status bar that lives in the footer:
+	// mode (NORMAL / INSERT) on the left, file path or transient message in
+	// the centre, and a wall clock on the right.
 	status *widget.StatusBar
+
+	// prompt is the static ":" label that appears to the left of the
+	// command-line input when the user enters command mode (e.g. ":w", ":q").
 	prompt *widget.Text
-	input  *widget.TextInput
+
+	// input is the text input field that receives the command string typed
+	// after the ":" prompt in command mode.
+	input *widget.TextInput
 
 	// commanding is true while the user is typing an ex command (":w", ":q",
-	// etc.). App.openCommand flips it to true and App.closeCommand flips it
+	// etc.). OpenCommand flips it to true and CloseCommand flips it
 	// back. Layout reads this flag on every pass to decide which widgets to
 	// show and which to suppress.
 	commanding bool
+
+	// resolver maps physical key events to semantic actions under ScopeCommandLine.
+	resolver KeyResolver
+
+	// sink dispatches resolved semantic actions synchronously to the parent coordinator.
+	sink KeyActionSink
+}
+
+// newFooter constructs the Footer and its child widgets: the three-segment
+// status bar, the static command prompt label, and the command text input.
+func newFooter(resolver KeyResolver, sink KeyActionSink) (*Footer, error) {
+	if resolver == nil {
+		return nil, errs.Wrap(errs.ErrInvalidArgument, "footer: resolver must not be nil")
+	}
+	if sink == nil {
+		return nil, errs.Wrap(errs.ErrInvalidArgument, "footer: sink must not be nil")
+	}
+	status := widget.NewStatusBar()
+	prompt := widget.NewText(commandPrompt, widget.WithTextStyle(commandPromptStyle))
+	input := widget.NewTextInput()
+	return &Footer{
+		status:   status,
+		prompt:   prompt,
+		input:    input,
+		resolver: resolver,
+		sink:     sink,
+	}, nil
 }
 
 // Init mounts all three child widgets into the TUI context and retains ctx
@@ -88,8 +128,8 @@ type footer struct {
 // footer's entire mounted lifetime.
 //
 // Call chain: tui.NewApp.Run → mount(nil, root) → App.Init → ctx.Mount(host)
-// → … → ctx.Mount(footer) → footer.Init.
-func (f *footer) Init(ctx *tui.Context) {
+// → … → ctx.Mount(footer) → Footer.Init.
+func (f *Footer) Init(ctx *tui.Context) {
 	f.ctx = ctx
 
 	// Mount all children unconditionally. The framework assigns each a stable
@@ -97,7 +137,7 @@ func (f *footer) Init(ctx *tui.Context) {
 	// event subscriptions break (see type-level doc above).
 	ctx.Mount(f.status)
 	if f.prompt == nil {
-		// Guard: New() normally passes a pre-built prompt, but if footer is
+		// Guard: newFooter() normally passes a pre-built prompt, but if Footer is
 		// constructed without one (e.g. in tests) build a default here.
 		f.prompt = widget.NewText(commandPrompt, widget.WithTextStyle(commandPromptStyle))
 	}
@@ -113,30 +153,24 @@ func (f *footer) Init(ctx *tui.Context) {
 //
 // Layout is called by the TUI framework on every layout pass — at startup,
 // whenever a component calls ctx.RequestLayout(), and after any terminal
-// resize event. The framework calls it top-down: Dock.Layout → footer.Layout.
-// After Layout returns, the framework calls Render on the same component tree
-// bottom-up (leaves first), so the sizes computed here are already committed
-// when Render runs.
-//
-// c (tui.Constraints) carries the maximum width and height the Dock is
-// offering the footer. Because the footer is pinned to DockBottom, the Dock
-// gives it the full terminal width and at most one row of height (MaxH=1 in
-// practice).
+// resize event. The framework calls it top-down: Dock.Layout → Footer.Layout.
+// After Layout returns, the framework calls Render bottom-up (leaves first),
+// so the sizes computed here are already committed when Render runs.
 //
 // # Normal mode layout
 //
-// The status bar fills the full width; prompt and input get zero size and an
-// empty rect so they don't paint:
+// When commanding is false, the status bar fills the entire footer width and
+// prompt and input are placed off-screen with zero size:
 //
-//	X=0                                             X=MaxW
-//	┌─────────────────────────────────────────────────┐
-//	│ status (W=MaxW, H=sz.H)                         │
-//	└─────────────────────────────────────────────────┘
-//	  prompt (W=0, H=0)  input (W=0, H=0)  ← invisible
+//	X=0                                                   X=MaxW
+//	┌─────────────────────────────────────────────────────┐
+//	│ status (W = MaxW, H = status.preferredHeight)       │
+//	└─────────────────────────────────────────────────────┘
+//	  prompt (W=0, H=0), input (W=0, H=0)  ← invisible
 //
 // # Command mode layout
 //
-// The status bar is suppressed and the remaining width is split between the
+// When commanding is true, the status bar is suppressed and replaced by a
 // fixed-width prompt label and a stretching text input:
 //
 //	X=0        X=promptSz.W                        X=MaxW
@@ -145,7 +179,7 @@ func (f *footer) Init(ctx *tui.Context) {
 //	│ (fixed)  │                                      │
 //	└──────────┴──────────────────────────────────────┘
 //	  status (W=0, H=0)  ← invisible
-func (f *footer) Layout(c tui.Constraints) tui.Size {
+func (f *Footer) Layout(c tui.Constraints) tui.Size {
 	if !f.commanding {
 		// ── Normal mode ──────────────────────────────────────────────────────
 		//
@@ -242,7 +276,7 @@ func (f *footer) Layout(c tui.Constraints) tui.Size {
 // prompt and input children paint. This ensures any leftover status-bar pixels
 // from the previous frame are erased — particularly important when the terminal
 // does not support full background-colour clearing.
-func (f *footer) Render(s tui.Surface) {
+func (f *Footer) Render(s tui.Surface) {
 	if f.commanding {
 		sz := s.Size()
 		if sz.W > 0 && sz.H > 0 {
@@ -255,9 +289,67 @@ func (f *footer) Render(s tui.Surface) {
 	}
 }
 
-// HandleEvent lets all events bubble up to the parent (App). The footer is a
-// pure layout shell: its children (StatusBar, Text, TextInput) handle their
-// own input, and App.handleKey owns the ":" keystroke that opens the command
-// line. Returning false here ensures the framework continues the event-bubbling
-// walk rather than stopping at the footer.
-func (f *footer) HandleEvent(tui.Event) bool { return false }
+// HandleEvent intercepts unconsumed keyboard events that bubble up from the
+// focused command input (widget.TextInput). In command mode, it resolves unhandled
+// keys (such as <Escape>) through the KeyResolver and forwards any resulting
+// KeyAction synchronously to the KeyActionSink.
+func (f *Footer) HandleEvent(ev tui.Event) bool {
+	ke, ok := ev.(tui.KeyEvent)
+	if !ok || ke.Kind == tui.KeyRelease {
+		return false
+	}
+	if !f.commanding {
+		return false
+	}
+	if action, ok := f.resolver.Resolve(ScopeCommandLine, ke); ok {
+		f.sink(action)
+		return true
+	}
+	return false
+}
+
+// InputNodeID returns the command input widget's stable NodeID. App uses this
+// in App.Init to wire the SubmitEvent subscription so submitted ex commands
+// are routed to App.runCommand.
+func (f *Footer) InputNodeID() tui.NodeID {
+	return f.input.NodeID()
+}
+
+// Commanding reports whether the command line is currently active.
+func (f *Footer) Commanding() bool {
+	return f.commanding
+}
+
+// CommandValue returns the current text in the command line input.
+func (f *Footer) CommandValue() string {
+	return f.input.Value()
+}
+
+// OpenCommand activates the command line input with the given prefill text,
+// moves focus to the input widget, and triggers layout and dirty passes.
+func (f *Footer) OpenCommand(prefill string) {
+	f.input.SetValue(prefill)
+	f.commanding = true
+	if f.ctx != nil {
+		f.ctx.FocusComponent(f.input)
+		f.ctx.RequestLayout()
+	}
+}
+
+// CloseCommand deactivates the command line input, clears its buffer,
+// and requests a layout pass.
+func (f *Footer) CloseCommand() {
+	f.commanding = false
+	f.input.SetValue("")
+	if f.ctx != nil {
+		f.ctx.RequestLayout()
+	}
+}
+
+// SetStatus updates the three segments of the status bar (mode on the left,
+// center text, and time on the right).
+func (f *Footer) SetStatus(left, center, right string) {
+	f.status.SetLeft(left)
+	f.status.SetCenter(center)
+	f.status.SetRight(right)
+}
