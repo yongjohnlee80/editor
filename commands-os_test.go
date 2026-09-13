@@ -30,12 +30,12 @@ type mockDocument struct {
 	dirty bool
 }
 
-func (m *mockDocument) Value() string      { return m.value }
-func (m *mockDocument) SetValue(v string)  { m.value = v }
-func (m *mockDocument) Path() string       { return m.path }
-func (m *mockDocument) SetPath(p string)   { m.path = p }
-func (m *mockDocument) MarkDirty()         { m.dirty = true }
-func (m *mockDocument) MarkClean()         { m.dirty = false }
+func (m *mockDocument) Value() string     { return m.value }
+func (m *mockDocument) SetValue(v string) { m.value = v }
+func (m *mockDocument) Path() string      { return m.path }
+func (m *mockDocument) SetPath(p string)  { m.path = p }
+func (m *mockDocument) MarkDirty()        { m.dirty = true }
+func (m *mockDocument) MarkClean()        { m.dirty = false }
 
 // ─── Base I/O: readInto ──────────────────────────────────────────────────────
 

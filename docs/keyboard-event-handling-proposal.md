@@ -19,9 +19,12 @@ In subsequent refactoring (2026-09-13), **command-line ownership was moved entir
 
 However, the core keyboard architecture established here—a pure, stateless `KeyResolver` coupled with component-local ancestor capture and synchronous `KeyActionSink` dispatch—remains the architectural foundation for the entire application.
 
-However, **keyboard event handling remains coupled inside `App.handleKey`**:
+### 1.1 Historical Problem Statement (Pre-Refactor)
+
+Prior to the adoption of this proposal, **keyboard event handling was coupled inside `App.handleKey`**:
 
 ```go
+// (Historical implementation prior to refactor)
 func (a *App) handleKey(k tui.KeyEvent) bool {
     if k.Kind == tui.KeyRelease {
         return false
@@ -44,10 +47,10 @@ func (a *App) handleKey(k tui.KeyEvent) bool {
 }
 ```
 
-### Shortcomings
-1. **Coupled Concerns in `App`**: `App` inspects `a.footer.Commanding()`, directly queries `a.editorPane.Mode()`, matches raw keys against `LeaderKey`, and executes transitions.
-2. **Passive Ancestors**: `EditorPane` and `Footer` have passive `HandleEvent(tui.Event) bool { return false }` methods, relying entirely on `App` at the root of the tree.
-3. **Collision Ambiguity**: Configurable keys (such as `LeaderKey`) can conflict with built-in vi bindings without a defined contract.
+### Historical Shortcomings
+1. **Coupled Concerns in `App`**: `App` inspected `a.footer.Commanding()`, directly queried `a.editorPane.Mode()`, matched raw keys against `LeaderKey`, and executed transitions.
+2. **Passive Ancestors**: `EditorPane` and `Footer` had passive `HandleEvent(tui.Event) bool { return false }` methods, relying entirely on `App` at the root of the tree.
+3. **Collision Ambiguity**: Configurable keys (such as `LeaderKey`) conflicted with built-in vi bindings without a defined contract.
 
 ---
 

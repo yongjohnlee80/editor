@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/yongjohnlee80/golib/tui"
+	"github.com/yongjohnlee80/golib/tui/style"
 	"github.com/yongjohnlee80/golib/tui/widget"
 )
 
@@ -656,5 +657,19 @@ func TestTopMenu_NormalRestoreFocus(t *testing.T) {
 	screen := h.tb.String()
 	if !strings.Contains(screen, "x") {
 		t.Fatalf("expected editor buffer to contain 'x', screen:\n%s", screen)
+	}
+}
+
+// TestDocsStylesSnippet_Compiles verifies that the code snippet documented in
+// docs/styles.md under "Floating Command Box" compiles and initializes cleanly.
+func TestDocsStylesSnippet_Compiles(t *testing.T) {
+	cmdInput := widget.NewTextInput()
+	cmdBox := widget.NewBox(
+		cmdInput,
+		widget.WithTitle("COMMAND:"),
+		widget.WithStyle(style.New().Border(style.BorderRounded)),
+	)
+	if cmdBox == nil {
+		t.Fatal("expected non-nil cmdBox")
 	}
 }

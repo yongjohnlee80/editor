@@ -83,9 +83,9 @@ st := style.New().
 
 ## 5. How to Create Styled Text
 
-### Pattern 1: Static Labels using `widget.NewText`
+### Pattern 1: Floating Command Box (`widget.TextInput` inside `widget.Box`)
 
-Use `widget.NewText` with `widget.WithTextStyle(...)` to create styled label components that plug directly into containers like `Dock`, `Flex`, or `Box`:
+Use `widget.NewTextInput` wrapped inside `widget.NewBox` with title and rounded border styling hooks:
 
 ```go
 package main
@@ -96,17 +96,15 @@ import (
 )
 
 // Floating command box container: rounded border with titled header
-cmdInput := widget.NewTextInput(
-    widget.WithTextInputStyles(widget.TextInputStyles{
-        Text:      style.New().Foreground(style.ANSI(15)),
-        Selection: style.New().Background(style.ANSI(6)).Foreground(style.ANSI(0)),
-    }),
-)
-cmdBox := widget.NewBox(
-    cmdInput,
-    widget.WithBoxTitle(" Command "),
-    widget.WithBoxBorder(style.BorderRounded),
-)
+func newCommandBox() (*widget.TextInput, *widget.Box) {
+    cmdInput := widget.NewTextInput()
+    cmdBox := widget.NewBox(
+        cmdInput,
+        widget.WithTitle("COMMAND:"),
+        widget.WithStyle(style.New().Border(style.BorderRounded)),
+    )
+    return cmdInput, cmdBox
+}
 ```
 
 ### Pattern 2: Menu Bar and Explorer Cursor Highlight
