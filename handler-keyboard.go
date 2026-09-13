@@ -1,7 +1,6 @@
 package editor
 
 import (
-
 	"github.com/yongjohnlee80/golib/errs"
 	"github.com/yongjohnlee80/golib/tui"
 	"github.com/yongjohnlee80/golib/tui/widget"
@@ -80,8 +79,11 @@ func (r *DefaultKeyResolver) Resolve(scope InputScope, ev tui.KeyEvent) (KeyActi
 		return ActionNone, false
 	}
 
-	// Alt key combinations trigger menu actions across all scopes:
-	// Alt+f -> File, Alt+o -> Option, Alt+h -> Help, Alt (or any other Alt+key) -> Toggle Menu.
+	// Alt key combinations trigger menu actions across all scopes for declared accelerators:
+	// Alt+f/F -> File, Alt+o/O -> Option, Alt+h/H -> Help.
+	// Note: The golib terminal decoder represents Alt only as a modifier on another key
+	// and exposes no standalone KeyAlt press or release events. Unrelated Alt chords return
+	// (ActionNone, false) so they bubble to host/widget bindings (such as Alt+hjkl).
 	if ev.Mods&tui.ModAlt != 0 {
 		switch ev.Code {
 		case 'f', 'F':
@@ -91,7 +93,7 @@ func (r *DefaultKeyResolver) Resolve(scope InputScope, ev tui.KeyEvent) (KeyActi
 		case 'h', 'H':
 			return ActionOpenMenuHelp, true
 		default:
-			return ActionToggleMenuBar, true
+			return ActionNone, false
 		}
 	}
 
@@ -101,7 +103,7 @@ func (r *DefaultKeyResolver) Resolve(scope InputScope, ev tui.KeyEvent) (KeyActi
 		return ActionNone, false
 	}
 
-	// <F10> toggles the menu bar across all input scopes (backwards-compatible alias).
+	// <F10> toggles the menu bar across all input scopes.
 	if ev.Code == tui.KeyF10 {
 		return ActionToggleMenuBar, true
 	}

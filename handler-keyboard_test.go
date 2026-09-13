@@ -151,8 +151,6 @@ func TestDefaultKeyResolver_Alt_TriggersMenu(t *testing.T) {
 		{'O', ActionOpenMenuOption},
 		{'h', ActionOpenMenuHelp},
 		{'H', ActionOpenMenuHelp},
-		{'m', ActionToggleMenuBar},
-		{' ', ActionToggleMenuBar},
 	}
 
 	for _, scope := range []InputScope{ScopeEditorNormal, ScopeCommandLine} {
@@ -164,6 +162,27 @@ func TestDefaultKeyResolver_Alt_TriggersMenu(t *testing.T) {
 			})
 			if !ok || act != tc.want {
 				t.Errorf("scope %v, key %c with Alt: got (%v, %v), want (%v, true)", scope, tc.code, act, ok, tc.want)
+			}
+		}
+	}
+}
+
+// Unrelated Alt key combinations must return (ActionNone, false) so they can bubble
+// to host or widget bindings (such as Alt+hjkl).
+func TestDefaultKeyResolver_Alt_UnrelatedBubbles(t *testing.T) {
+	res := NewDefaultKeyResolver(" ")
+
+	unrelated := []rune{'m', ' ', 'j', 'k', 'l', 'x', '1', '2'}
+
+	for _, scope := range []InputScope{ScopeEditorNormal, ScopeCommandLine} {
+		for _, r := range unrelated {
+			act, ok := res.Resolve(scope, tui.KeyEvent{
+				Kind: tui.KeyPress,
+				Code: r,
+				Mods: tui.ModAlt,
+			})
+			if ok || act != ActionNone {
+				t.Errorf("scope %v, key %c with Alt: got (%v, %v), want (ActionNone, false)", scope, r, act, ok)
 			}
 		}
 	}

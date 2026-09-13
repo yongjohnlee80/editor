@@ -38,6 +38,7 @@ func New(cfg Config, path string, quit func()) (*App, error) {
 
 	// Construct pure key resolver configured with the validated LeaderKey.
 	resolver := NewDefaultKeyResolver(cfg.Keyboard.LeaderKey)
+	a.resolver = resolver
 	sink := a.handleKeyAction
 
 	var err error
@@ -61,11 +62,9 @@ func New(cfg Config, path string, quit func()) (*App, error) {
 			a.setMessage(msg)
 		},
 		OnRestoreFocus: func() {
-			if a.ctx != nil {
-				a.ctx.FocusComponent(a.editorPane)
-			}
+			a.editorPane.FocusActive()
 		},
-	})
+	}, resolver)
 
 	// dock is the top-level layout container. It describes the screen from
 	// the outside in:
@@ -165,6 +164,9 @@ type App struct {
 	// a write confirmation, or why a command was refused. Cleared on the next
 	// command.
 	message string
+
+	// resolver translates physical key events into semantic actions.
+	resolver KeyResolver
 }
 
 // registerCommands registers built-in ex commands in the command registry.
@@ -270,26 +272,22 @@ func (a *App) HandleEvent(ev tui.Event) bool {
 		a.refresh()
 		return true
 	case tui.KeyEvent:
-		if e.Kind != tui.KeyRelease {
-			if e.Mods&tui.ModAlt != 0 {
-				switch e.Code {
-				case 'f', 'F':
-					a.openMenuCategory(0)
-					return true
-				case 'o', 'O':
-					a.openMenuCategory(1)
-					return true
-				case 'h', 'H':
-					a.openMenuCategory(2)
-					return true
-				default:
+		if e.Kind != tui.KeyRelease && a.resolver != nil {
+			if action, ok := a.resolver.Resolve(ScopeEditorNormal, e); ok {
+				switch action {
+				case ActionToggleMenuBar:
 					a.toggleMenuBar()
 					return true
+				case ActionOpenMenuFile:
+					a.openMenuCategory(0)
+					return true
+				case ActionOpenMenuOption:
+					a.openMenuCategory(1)
+					return true
+				case ActionOpenMenuHelp:
+					a.openMenuCategory(2)
+					return true
 				}
-			}
-			if e.Code == tui.KeyF10 {
-				a.toggleMenuBar()
-				return true
 			}
 		}
 	}

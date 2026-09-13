@@ -162,7 +162,7 @@ func TestMenuBar_ModalExit_Flow(t *testing.T) {
 	mb := tm.Bar()
 
 	// 1. Test Exit confirmed with Enter on Yes
-	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyF10}) // activate
+	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyF10})  // activate
 	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyDown}) // open dropdown
 	// Move down to Exit (item 3)
 	for i := 0; i < 3; i++ {

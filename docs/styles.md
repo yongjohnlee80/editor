@@ -95,58 +95,58 @@ import (
     "github.com/yongjohnlee80/golib/tui/widget"
 )
 
-// Mode badge: Blue background with bright white text
-var commandBadgeStyle = style.New().
-    Background(style.ANSI(4)).
-    Foreground(style.ANSI(15)).
-    Bold(true)
-
-// Create a static text widget:
-badge := widget.NewText(" COMMAND: ", widget.WithTextStyle(commandBadgeStyle))
+// Floating command box container: rounded border with titled header
+cmdInput := widget.NewTextInput(
+    widget.WithTextInputStyles(widget.TextInputStyles{
+        Text:      style.New().Foreground(style.ANSI(15)),
+        Selection: style.New().Background(style.ANSI(6)).Foreground(style.ANSI(0)),
+    }),
+)
+cmdBox := widget.NewBox(
+    cmdInput,
+    widget.WithBoxTitle(" Command "),
+    widget.WithBoxBorder(style.BorderRounded),
+)
 ```
 
-### Pattern 2: Direct Painting onto `tui.Surface` in `Render`
+### Pattern 2: Menu Bar and Explorer Cursor Highlight
+
+The menu bar and dropdowns follow the Borland C++ / Turbo Vision styling with autodb explorer highlights:
+
+```go
+// Menu bar default: light grey background with black text
+menuBarStyle := style.New().Background(style.ANSI(7)).Foreground(style.ANSI(0))
+
+// Mnemonic accelerator accent: highlighted red letter
+menuAccentStyle := style.New().Background(style.ANSI(7)).Foreground(style.ANSI(1)).Bold(true)
+
+// Active cursor selection (mirroring autodb explorer cursorRowStyle):
+// Cyan ANSI 6 background with black ANSI 0 text
+cursorRowStyle := style.New().Background(style.ANSI(6)).Foreground(style.ANSI(0))
+
+// Active cursor selection with accented hotkey:
+cursorAccentStyle := style.New().Background(style.ANSI(6)).Foreground(style.ANSI(9)).Bold(true)
+```
+
+### Pattern 3: Direct Painting onto `tui.Surface` in `Render`
 
 When building custom components implementing `tui.Component`, use `sur.SetCell(...)` or `sur.Fill(...)` in your `Render` method:
 
 ```go
 func (m *MyComponent) Render(s tui.Surface) {
     // Define styles:
-    bgStyle := style.New().Background(style.ANSI(4)).Foreground(style.ANSI(15))
-    errStyle := style.New().Foreground(style.ANSI(1)).Bold(true)
+    bgStyle := style.New().Background(style.ANSI(7)).Foreground(style.ANSI(0))
+    hotkeyStyle := style.New().Background(style.ANSI(7)).Foreground(style.ANSI(1)).Bold(true)
 
     // Fill an entire bounding rectangle:
     s.Fill(tui.Rect{X: 0, Y: 0, W: 10, H: 1}, " ", bgStyle)
 
-    // Set individual characters / grapheme clusters:
-    s.SetCell(0, 0, "C", bgStyle)
-    s.SetCell(1, 0, "O", bgStyle)
-    s.SetCell(2, 0, "M", bgStyle)
-
-    // Paint an error message:
-    msg := "Error: file not found"
-    x := 0
-    for _, ch := range msg {
-        s.SetCell(x, 1, string(ch), errStyle)
-        x++
-    }
+    // Set accented hotkey character:
+    s.SetCell(1, 0, "F", hotkeyStyle)
+    s.SetCell(2, 0, "i", bgStyle)
+    s.SetCell(3, 0, "l", bgStyle)
+    s.SetCell(4, 0, "e", bgStyle)
 }
-```
-
-### Pattern 3: Text Input Customization (`widget.TextInput`)
-
-Configure `widget.TextInput` styling hooks (text, placeholder, selection, validation error):
-
-```go
-input := widget.NewTextInput(
-    widget.WithPlaceholder("type command here..."),
-    widget.WithTextInputStyles(widget.TextInputStyles{
-        Text:        style.New().Foreground(style.ANSI(15)),
-        Placeholder: style.New().Foreground(style.ANSI(8)).Faint(true),
-        Selection:   style.New().Background(style.ANSI(12)).Foreground(style.ANSI(0)),
-        Error:       style.New().Foreground(style.ANSI(9)).Bold(true),
-    }),
-)
 ```
 
 ---

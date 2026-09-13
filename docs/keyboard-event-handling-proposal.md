@@ -3,17 +3,21 @@
 **Author:** Juliet  
 **Date:** 2026-09-09  
 **Reviewer:** Lector  
-**Status:** Revised per Architectural Review (`$KB_ROOT/agents/lector/reviews/2026-09-09-editor-keyboard-event-separation-proposal-review.md`)  
-**Related Components:** `App`, `EditorPane`, `Footer`, `handler-keyboard.go`
+**Status:** Implemented & Superseded by Floating Command Line in EditorPane & Menu Subsystem (2026-09-13)
+**Related Components:** `App`, `EditorPane`, `Footer`, `TopMenu`, `handler-keyboard.go`
 
 ---
 
 ## 1. Context & Problem Statement
 
-In the refactored editor architecture, structural components have been split into modular units:
+In the initial refactoring of the editor, structural components were divided as:
 - **`EditorPane`**: owns the text buffer, modal editing state machine, path, dirty state, and document I/O.
-- **`Footer`**: owns the status bar, command prompt label, and ex command text input.
+- **`Footer`**: originally owned the status bar, command prompt label, and ex command text input.
 - **`App`**: orchestrates top-level layout (`Dock` + `OverlayHost`) and ex command dispatch (`Registry`).
+
+In subsequent refactoring (2026-09-13), **command-line ownership was moved entirely inside `EditorPane`** as a floating, centered `TextInput` overlay, turning `Footer` into a status-only reporter. Furthermore, a Borland C++ / Turbo Vision-style **`TopMenu`** subsystem was introduced (with File, Option, Help categories, cascading submenus, and modals).
+
+However, the core keyboard architecture established here—a pure, stateless `KeyResolver` coupled with component-local ancestor capture and synchronous `KeyActionSink` dispatch—remains the architectural foundation for the entire application.
 
 However, **keyboard event handling remains coupled inside `App.handleKey`**:
 
@@ -56,7 +60,7 @@ func (a *App) handleKey(k tui.KeyEvent) bool {
       │
       │ (If leaf returns false / unconsumed)
       ▼
-2. Local Enclosing Component (Ancestor: EditorPane or Footer)
+2. Local Enclosing Component (Ancestor: EditorPane or MenuBar)
       │
       │ (If enclosing component returns false)
       ▼
@@ -65,29 +69,32 @@ func (a *App) handleKey(k tui.KeyEvent) bool {
 
 Because leaf widgets run first:
 - When typing in **Insert mode**, `widget.Editor` consumes text and keys; they never bubble to `EditorPane`.
-- When typing ex commands, `widget.TextInput` consumes normal text; only unhandled keys (like `<Esc>`) bubble to `Footer`.
+- When typing ex commands, `widget.TextInput` consumes text; only unhandled keys (like `<Esc>`) bubble to `EditorPane` (under `ScopeCommandLine`).
 - Normal mode navigation keys (e.g. `h`, `j`, `k`, `l`, `w`, `b`) are consumed by `widget.Editor`.
-- Unbound keys (e.g. `:` or unmapped leader keys) bubble from `widget.Editor` up to `EditorPane`.
+- Unbound keys (e.g. `:` or unmapped leader keys) bubble from `widget.Editor` up to `EditorPane` (under `ScopeEditorNormal`).
+- Menu accelerators (`Alt+f`, `Alt+o`, `Alt+h`, `F10`) bubble to `EditorPane`, `MenuBar`, or `App`, where they resolve identically via the shared `KeyResolver`.
+- Unrelated Alt chords return `(ActionNone, false)` and bubble to the host.
 
 ---
 
 ## 3. Analysis of Approaches
 
 ### Approach A: Ad-Hoc Matching in Components
-Each component (`EditorPane`, `Footer`) embeds its own ad-hoc key comparisons and invokes arbitrary callbacks.
+Each component (`EditorPane`, `Footer`, `MenuBar`) embeds its own ad-hoc key comparisons and invokes arbitrary callbacks.
 - **Flaws**: Violates DRY by duplicating key normalization and chord matching; scatters keybinding definitions across components.
 
 ### Approach B: Heavy Centralized Controller (`handler-keyboard.go` as Second Root)
-A stateful `KeyboardHandler` service that holds references to `App`, `EditorPane`, and `Footer`, inspecting UI state and performing focus/visibility mutations.
+A stateful `KeyboardHandler` service that holds references to `App`, `EditorPane`, and `MenuBar`, inspecting UI state and performing focus/visibility mutations.
 - **Flaws**: Violates SRP and DIP by creating a second root controller under a different name, introducing duplicate state tracking and tight coupling.
 
-### Approach C: Hybrid Boundary (Recommended & Adopted)
+### Approach C: Hybrid Boundary (Implemented Architecture)
 A **pure shared resolver** coupled with **component-local capture** and **synchronous action sinks**:
 1. **`handler-keyboard.go`** is a **pure resolver**: defines `InputScope`, `KeyAction`, normalization, and `Resolve(InputScope, tui.KeyEvent) (KeyAction, bool)`. It holds **zero mutable UI state**, no component pointers, and no focus logic.
-2. **`EditorPane` and `Footer`** receive a `KeyResolver` and a synchronous `KeyActionSink`:
-   - `EditorPane` sees keys unconsumed by `widget.Editor`, checks its live Normal mode, resolves under `ScopeEditorNormal`, and emits semantic actions (e.g. `ActionOpenCommandLine`).
-   - `Footer` sees keys unconsumed by `widget.TextInput`, resolves under `ScopeCommandLine`, and emits `ActionCancelCommandLine`.
-3. **`App`** alone implements the `KeyActionSink` and acts as the transition coordinator: opening/closing the command line, toggling sibling visibility, shifting focus, and refreshing the status bar.
+2. **`EditorPane`** receives a `KeyResolver` and a synchronous `KeyActionSink`:
+   - Sees keys unconsumed by `widget.Editor`, checks its live Normal mode, resolves under `ScopeEditorNormal`, and emits semantic actions (e.g. `ActionOpenCommandLine`, `ActionOpenMenuFile`).
+   - Sees keys unconsumed by `widget.TextInput`, resolves under `ScopeCommandLine`, and emits `ActionCancelCommandLine` or menu actions.
+3. **`MenuBar`** resolves accelerators under `ScopeEditorNormal` and toggles or opens dropdowns.
+4. **`App`** alone implements the `KeyActionSink` and acts as the transition coordinator: opening/closing the command line, toggling menu bar and dropdowns, shifting focus, and refreshing status.
 
 ---
 
@@ -163,27 +170,33 @@ func (ep *EditorPane) HandleEvent(ev tui.Event) bool {
 }
 ```
 
-#### `Footer`
+#### `MenuBar`
 ```go
-type Footer struct {
-    // ... existing fields ...
-    resolver KeyResolver
-    sink     KeyActionSink
+type MenuBar struct {
+    menu *TopMenu
+    // ...
 }
 
-func (f *Footer) HandleEvent(ev tui.Event) bool {
+func (mb *MenuBar) HandleEvent(ev tui.Event) bool {
     ke, ok := ev.(tui.KeyEvent)
     if !ok || ke.Kind == tui.KeyRelease {
         return false
     }
-    if !f.commanding || f.resolver == nil || f.sink == nil {
-        return false
+    // Route Alt accelerators and F10 toggle through shared key resolver
+    if mb.menu.resolver != nil {
+        if action, ok := mb.menu.resolver.Resolve(ScopeEditorNormal, ke); ok {
+            switch action {
+            case ActionToggleMenuBar:
+                mb.menu.Toggle(ctx)
+                return true
+            case ActionOpenMenuFile:
+                mb.menu.OpenCategory(0, ctx)
+                return true
+            // ...
+            }
+        }
     }
-
-    if action, ok := f.resolver.Resolve(ScopeCommandLine, ke); ok {
-        f.sink(action)
-        return true
-    }
+    // ...
     return false
 }
 ```
@@ -197,6 +210,14 @@ func (a *App) handleKeyAction(action KeyAction) {
         a.openCommand("")
     case ActionCancelCommandLine:
         a.closeCommand()
+    case ActionToggleMenuBar:
+        a.toggleMenuBar()
+    case ActionOpenMenuFile:
+        a.openMenuCategory(0)
+    case ActionOpenMenuOption:
+        a.openMenuCategory(1)
+    case ActionOpenMenuHelp:
+        a.openMenuCategory(2)
     }
 }
 ```
