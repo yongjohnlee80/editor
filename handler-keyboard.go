@@ -36,6 +36,9 @@ const (
 
 	// ActionCancelCommandLine requests cancelling and closing the ex command line.
 	ActionCancelCommandLine
+
+	// ActionToggleMenuBar requests activating or deactivating the top menu bar.
+	ActionToggleMenuBar
 )
 
 // KeyResolver resolves physical key events into semantic actions within an input scope.
@@ -72,6 +75,11 @@ func (r *DefaultKeyResolver) Resolve(scope InputScope, ev tui.KeyEvent) (KeyActi
 	// resolution so they can bubble to host or window-manager bindings.
 	if ev.Mods&(tui.ModAlt|tui.ModSuper|tui.ModMeta|tui.ModHyper) != 0 {
 		return ActionNone, false
+	}
+
+	// <F10> toggles the top menu bar across all input scopes.
+	if ev.Code == tui.KeyF10 {
+		return ActionToggleMenuBar, true
 	}
 
 	switch scope {

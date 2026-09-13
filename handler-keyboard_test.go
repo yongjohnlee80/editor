@@ -123,3 +123,17 @@ func TestComponent_NilWiringRejection(t *testing.T) {
 		t.Error("newEditorPane with nil sink must return error")
 	}
 }
+
+func TestDefaultKeyResolver_F10_TogglesMenuBar(t *testing.T) {
+	res := NewDefaultKeyResolver(" ")
+
+	for _, scope := range []InputScope{ScopeEditorNormal, ScopeCommandLine} {
+		act, ok := res.Resolve(scope, tui.KeyEvent{
+			Kind: tui.KeyPress,
+			Code: tui.KeyF10,
+		})
+		if !ok || act != ActionToggleMenuBar {
+			t.Errorf("scope %v: got (%v, %v), want (ActionToggleMenuBar, true)", scope, act, ok)
+		}
+	}
+}
