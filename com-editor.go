@@ -172,8 +172,14 @@ func (ep *EditorPane) HandleEvent(ev tui.Event) bool {
 
 	if ep.commanding {
 		if action, ok := ep.resolver.Resolve(ScopeCommandLine, ke); ok {
-			if action == ActionCancelCommandLine {
+			switch action {
+			case ActionCancelCommandLine:
 				ep.CloseCommand()
+				if ep.sink != nil {
+					ep.sink(action)
+				}
+				return true
+			case ActionToggleMenuBar:
 				if ep.sink != nil {
 					ep.sink(action)
 				}
@@ -183,13 +189,25 @@ func (ep *EditorPane) HandleEvent(ev tui.Event) bool {
 		return false
 	}
 
-	// Normal mode keyboard handling
+	// In non-Normal modes (Insert mode or Nano modeless editing), F10 toggles the menu bar.
 	if ep.Mode() != widget.ModeNormal {
+		if ke.Code == tui.KeyF10 {
+			if ep.sink != nil {
+				ep.sink(ActionToggleMenuBar)
+			}
+			return true
+		}
 		return false
 	}
 	if action, ok := ep.resolver.Resolve(ScopeEditorNormal, ke); ok {
-		if action == ActionOpenCommandLine {
+		switch action {
+		case ActionOpenCommandLine:
 			ep.OpenCommand("")
+			if ep.sink != nil {
+				ep.sink(action)
+			}
+			return true
+		case ActionToggleMenuBar:
 			if ep.sink != nil {
 				ep.sink(action)
 			}
@@ -197,6 +215,22 @@ func (ep *EditorPane) HandleEvent(ev tui.Event) bool {
 		}
 	}
 	return false
+}
+
+// SetKeyset configures the editor buffer's editing profile (e.g. KeysetVim, KeysetNano).
+// Switching to KeysetNano disables modal editing and enters Insert mode; switching to
+// KeysetVim restores modal editing in Normal mode.
+func (ep *EditorPane) SetKeyset(ks widget.Keyset) {
+	opt := widget.WithKeyset(ks)
+	opt(ep.editor)
+	if ep.ctx != nil {
+		ep.ctx.MarkDirty()
+	}
+}
+
+// Keyset returns the editor buffer's active editing profile.
+func (ep *EditorPane) Keyset() widget.Keyset {
+	return ep.editor.Keyset()
 }
 
 // NodeID returns the editor widget's stable NodeID.

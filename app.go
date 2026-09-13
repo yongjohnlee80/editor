@@ -4,13 +4,13 @@
 // StatusBar pinned to the bottom of a Dock, and the whole thing inside an
 // OverlayHost so modals have somewhere to attach.
 //
-//	┌ path/to/file ──────────────┐
-//	│ 1 the vim editor panel     │
-//	│   ╭── COMMAND: ───────╮    │
-//	│   │ :w                │    │
-//	│   ╰───────────────────╯    │
-//	└────────────────────────────┘
-//	 NORMAL   path/to/file   14:22
+//	┌─ File ── Option ────────────────────────── Help ─┐
+//	│ 1 the vim editor panel                           │
+//	│   ╭── COMMAND: ───────╮                          │
+//	│   │ :w                │                          │
+//	│   ╰───────────────────╯                          │
+//	└──────────────────────────────────────────────────┘
+//	 NORMAL   path/to/file                         14:22
 //
 // The command line is rendered as a floating TextInput box centered in the
 // middle of EditorPane when activated (e.g. typing ":" in Normal mode). The
@@ -48,25 +48,47 @@ func New(cfg Config, path string, quit func()) (*App, error) {
 	// footer renders the three-segment status bar at the bottom.
 	a.footer = newFooter()
 
+	// menu manages the top-level Borland-style menu bar (File, Option, Help),
+	// dropdowns, and modals.
+	a.menu = newTopMenu(TopMenuCallbacks{
+		OnQuit: a.quit,
+		OnSetKeyset: func(ks widget.Keyset) {
+			a.editorPane.SetKeyset(ks)
+			a.refresh()
+		},
+		OnStatusMessage: func(msg string) {
+			a.setMessage(msg)
+		},
+		OnRestoreFocus: func() {
+			if a.ctx != nil {
+				a.ctx.FocusComponent(a.editorPane)
+			}
+		},
+	})
+
 	// dock is the top-level layout container. It describes the screen from
 	// the outside in:
 	//   ┌─ OverlayHost (modal layer) ──────────────────┐
 	//   │  ┌─ Dock ──────────────────────────────────┐ │
+	//   │  │  menu (top bar)          ← pinned top   │ │
+	//   │  │──────────────────────────────────────────│ │
 	//   │  │  editorPane (editor + cmdline) ← fills  │ │
 	//   │  │──────────────────────────────────────────│ │
 	//   │  │  footer (status bar)     ← pinned bottom │ │
 	//   │  └─────────────────────────────────────────-┘ │
 	//   └──────────────────────────────────────────────-┘
-	// The footer is pinned to the bottom edge; the editorPane expands to fill
-	// the remaining space above it.
+	// The menu is pinned to the top edge; the footer is pinned to the bottom
+	// edge; the editorPane expands to fill the remaining space between them.
 	dock := tui.NewDock()
+	dock.Pin(tui.DockTop, a.menu.Bar())
 	dock.Pin(tui.DockBottom, a.footer)
 	dock.Add(a.editorPane)
 
-	// host wraps the dock in an OverlayHost so that modal widgets (e.g. a
-	// file-picker or confirmation dialog) have a surface to attach to on top
-	// of the rest of the UI without disturbing the layout below.
+	// host wraps the dock in an OverlayHost so that modal widgets and dropdown
+	// popups have a surface to attach to on top of the rest of the UI without
+	// disturbing the layout below.
 	a.host = widget.NewOverlayHost(dock)
+	a.host.Stack.Add(a.menu.Overlay())
 
 	// registry is the command registry mapping ex command verbs to Handlers.
 	a.registry = NewRegistry()
@@ -103,6 +125,9 @@ type App struct {
 	// footer manages status bar presentation (statistics, mode, clock) at the bottom
 	// of the screen.
 	footer *Footer
+
+	// menu coordinates the Borland-style top menu bar, dropdowns, and modals.
+	menu *TopMenu
 
 	// host is the root OverlayHost (embedding *tui.Stack) wrapping the main dock
 	// layout (editorPane + footer) as its base layer. It acts as the z-stack anchor
@@ -219,13 +244,18 @@ func (a *App) Layout(c tui.Constraints) tui.Size {
 // entirely produced by its mounted child hierarchy (a.host).
 func (a *App) Render(tui.Surface) {}
 
-// HandleEvent handles periodic clock ticks to update the status line time.
-// Keyboard events are handled locally within EditorPane.
+// HandleEvent handles periodic clock ticks and global F10 menu bar toggling.
+// Keyboard events are otherwise handled locally within EditorPane or MenuBar.
 func (a *App) HandleEvent(ev tui.Event) bool {
-	switch ev.(type) {
+	switch e := ev.(type) {
 	case tui.TickEvent:
 		a.refresh()
 		return true
+	case tui.KeyEvent:
+		if e.Kind != tui.KeyRelease && e.Code == tui.KeyF10 {
+			a.toggleMenuBar()
+			return true
+		}
 	}
 	return false
 }
@@ -239,6 +269,17 @@ func (a *App) handleKeyAction(action KeyAction) {
 		a.openCommand("")
 	case ActionCancelCommandLine:
 		a.closeCommand()
+	case ActionToggleMenuBar:
+		a.toggleMenuBar()
+	}
+}
+
+// toggleMenuBar toggles activation of the top menu bar.
+func (a *App) toggleMenuBar() {
+	if a.menu.Active() {
+		a.menu.Deactivate(a.ctx)
+	} else {
+		a.menu.Activate(a.ctx)
 	}
 }
 
@@ -294,6 +335,9 @@ func (a *App) refresh() {
 		return
 	}
 	modeStr := " " + a.editorPane.Mode().String() + " "
+	if a.editorPane.Keyset() == widget.KeysetNano {
+		modeStr = " NANO "
+	}
 	centre := a.editorPane.title()
 	if a.message != "" {
 		centre = a.message

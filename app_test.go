@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/yongjohnlee80/golib/tui"
+	"github.com/yongjohnlee80/golib/tui/widget"
 )
 
 // These tests drive the real component tree over tui.TestBackend — no PTY.
@@ -86,6 +87,20 @@ func (h *harness) mode() string {
 	return v
 }
 
+func (h *harness) keyset() widget.Keyset {
+	h.t.Helper()
+	var ks widget.Keyset
+	h.read(func() { ks = h.app.editorPane.Keyset() })
+	return ks
+}
+
+func (h *harness) menuActive() bool {
+	h.t.Helper()
+	var act bool
+	h.read(func() { act = h.app.menu.Active() })
+	return act
+}
+
 func newHarness(t *testing.T, cfg Config, path string) *harness {
 	t.Helper()
 	tb := tui.NewTestBackend(80, 24)
@@ -151,6 +166,14 @@ func (h *harness) escape() {
 	h.t.Helper()
 	if err := h.tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEscape}); err != nil {
 		h.t.Fatalf("Inject Escape: %v", err)
+	}
+	h.settle()
+}
+
+func (h *harness) pressKey(code rune) {
+	h.t.Helper()
+	if err := h.tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: code}); err != nil {
+		h.t.Fatalf("Inject Key %v: %v", code, err)
 	}
 	h.settle()
 }
@@ -359,5 +382,143 @@ func TestCommand_EditOpensFile(t *testing.T) {
 	h.read(func() { val = h.app.editorPane.Value() })
 	if !strings.Contains(val, "loaded externally") {
 		t.Errorf("buffer value = %q, want 'loaded externally'", val)
+	}
+}
+
+// F10 activates and deactivates the top menu bar.
+func TestTopMenu_F10TogglesMenuBar(t *testing.T) {
+	h := newHarness(t, DefaultConfig(), "")
+
+	if h.menuActive() {
+		t.Fatal("menu bar should be inactive initially")
+	}
+
+	// Pressing F10 activates the menu bar.
+	h.pressKey(tui.KeyF10)
+	if !h.menuActive() {
+		t.Fatal("F10 did not activate top menu bar")
+	}
+
+	screen := h.tb.String()
+	if !strings.Contains(screen, "File") || !strings.Contains(screen, "Option") || !strings.Contains(screen, "Help") {
+		t.Fatalf("menu bar did not render expected categories; screen:\n%s", screen)
+	}
+
+	// Pressing F10 again toggles it off.
+	h.pressKey(tui.KeyF10)
+	if h.menuActive() {
+		t.Fatal("second F10 did not deactivate top menu bar")
+	}
+
+	// Re-activate and test Escape to dismiss.
+	h.pressKey(tui.KeyF10)
+	if !h.menuActive() {
+		t.Fatal("F10 failed to re-activate top menu bar")
+	}
+	h.escape()
+	if h.menuActive() {
+		t.Fatal("Esc did not deactivate top menu bar")
+	}
+}
+
+// Navigating to Option -> Keymaps allows switching between Vim and Nano keymaps.
+func TestTopMenu_KeymapSwitchModal(t *testing.T) {
+	h := newHarness(t, DefaultConfig(), "")
+
+	if ks := h.keyset(); ks != widget.KeysetVim {
+		t.Fatalf("initial keyset = %v, want KeysetVim", ks)
+	}
+
+	// F10 to activate menu bar
+	h.pressKey(tui.KeyF10)
+
+	// Move right to Option
+	h.pressKey(tui.KeyRight)
+
+	// Open dropdown
+	h.pressKey(tui.KeyEnter)
+
+	// Open Keymaps modal (first item in Option)
+	h.pressKey(tui.KeyEnter)
+
+	modalScreen := h.tb.String()
+	if !strings.Contains(modalScreen, "Select Editor Keymap") {
+		t.Fatalf("Keymaps modal was not rendered; screen:\n%s", modalScreen)
+	}
+
+	// Press '2' to switch to Nano
+	h.pressKey('2')
+
+	if ks := h.keyset(); ks != widget.KeysetNano {
+		t.Fatalf("keyset after selecting Nano = %v, want KeysetNano", ks)
+	}
+	if msg := h.message(); !strings.Contains(msg, "Nano") {
+		t.Errorf("expected status message mentioning Nano, got %q", msg)
+	}
+
+	// Switch back to Vim via menu
+	h.pressKey(tui.KeyF10)
+	h.pressKey(tui.KeyRight)
+	h.pressKey(tui.KeyEnter)
+	h.pressKey(tui.KeyEnter)
+
+	// Press '1' to switch to Vim
+	h.pressKey('1')
+
+	if ks := h.keyset(); ks != widget.KeysetVim {
+		t.Fatalf("keyset after selecting Vim = %v, want KeysetVim", ks)
+	}
+	if msg := h.message(); !strings.Contains(msg, "Vim") {
+		t.Errorf("expected status message mentioning Vim, got %q", msg)
+	}
+}
+
+// File -> Exit opens the exit modal and can be dismissed without quitting.
+func TestTopMenu_ExitModalCancel(t *testing.T) {
+	h := newHarness(t, DefaultConfig(), "")
+
+	// F10 -> Enter (open File dropdown) -> navigate to Exit
+	h.pressKey(tui.KeyF10)
+	h.pressKey(tui.KeyEnter)
+
+	// Move down to Exit (New -> Open -> Save -> Exit = 3 downs)
+	h.pressKey(tui.KeyDown)
+	h.pressKey(tui.KeyDown)
+	h.pressKey(tui.KeyDown)
+	h.pressKey(tui.KeyEnter)
+
+	screen := h.tb.String()
+	if !strings.Contains(screen, "Are you sure to quit?") {
+		t.Fatalf("Exit confirmation modal did not appear; screen:\n%s", screen)
+	}
+
+	// Press 'n' to dismiss
+	h.pressKey('n')
+	if h.menuActive() {
+		t.Fatal("modal and menu should be deactivated after 'n'")
+	}
+}
+
+// Unimplemented menu items show the "Not Implemented" modal.
+func TestTopMenu_NotImplementedModal(t *testing.T) {
+	h := newHarness(t, DefaultConfig(), "")
+
+	// F10 -> Enter (File) -> Enter (New)
+	h.pressKey(tui.KeyF10)
+	h.pressKey(tui.KeyEnter)
+	h.pressKey(tui.KeyEnter)
+
+	screen := h.tb.String()
+	if !strings.Contains(screen, "Not Implemented") {
+		t.Fatalf("Not Implemented modal did not appear; screen:\n%s", screen)
+	}
+	if !strings.Contains(screen, "File -> New") {
+		t.Fatalf("modal message should mention File -> New; screen:\n%s", screen)
+	}
+
+	// Esc dismisses the modal
+	h.escape()
+	if h.menuActive() {
+		t.Fatal("modal and menu should be deactivated after Esc")
 	}
 }
