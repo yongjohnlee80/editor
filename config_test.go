@@ -167,4 +167,12 @@ func TestExampleConfigParsesAndMatchesDefaults(t *testing.T) {
 	if got != DefaultConfig() {
 		t.Errorf("editor.example.toml = %+v, want it to state the defaults %+v", got, DefaultConfig())
 	}
+	raw, err := os.ReadFile("editor.example.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(raw)
+	if !strings.Contains(content, "[menu]") || !strings.Contains(content, "Placement") {
+		t.Errorf("editor.example.toml must explicitly contain [menu] section and Placement key")
+	}
 }

@@ -133,33 +133,36 @@ The editor composes multiple widgets into a clean, layered terminal application:
 ```text
 App (root tui.Component)
  └─ host (*widget.OverlayHost - embeds tui.Stack)
-     └─ dock (*tui.Dock)
-         ├─ Top: box (*widget.Box)
-         │   └─ editor (*widget.Editor)  [vi buffer & editing state]
-         │
-         └─ Bottom (Pinned): footer (*footer)
-             ├─ status (*widget.StatusBar)        [NORMAL  file.txt  14:22:00]
-             └─ commanding mode:
-                 ├─ cmdPrompt (*widget.Text)      [COMMAND: ]
-                 └─ cmdIn (*widget.TextInput)     [:w file.txt]
+     ├─ Layer 0: dock (*tui.Dock)
+     │   ├─ Configurable Edge: menu.bar (*MenuBar) [File  Option            Help]
+     │   │                                         (Top, Bottom, Left, or Right)
+     │   ├─ Center (Fills): editorPane (*EditorPane)
+     │   │   ├─ editor (*widget.Editor)            [vi buffer & editing state]
+     │   │   └─ commanding overlay:
+     │   │       └─ cmdBox (*widget.Box)           [centered floating box]
+     │   │           └─ cmdInput (*widget.TextInput)
+     │   │
+     │   └─ Bottom (Pinned): footer (*footer)
+     │       └─ status (*widget.StatusBar)         [NORMAL  file.txt  14:22:00]
+     │
+     └─ Layer 1: menu.overlay (*MenuOverlay)
+         ├─ Dropdown Card (*widget.Box)
+         ├─ Cascading Submenu Card (*widget.Box)   (e.g. Keymaps -> 1. Vim, 2. Nano)
+         └─ Modals (*widget.Box)                   (Exit confirmation, Not Implemented)
 ```
 
 ### Component Roles
 
 1. **`editor *widget.Editor`**:
    The core text editing buffer. Owns the vi state machine (Normal vs. Insert mode), cursor navigation, line buffers, and text mutations.
-2. **`box *widget.Box`**:
-   Wraps the editor with an in-border title. It renders the file path and dirty indicator `[+]`. Focus transitions automatically highlight the border using theme tokens.
-3. **`status *widget.StatusBar`**:
-   A 3-section status line pinned at the bottom: mode indicator on the left, file path or transient feedback message in the center, and wall clock on the right.
-4. **`cmdPrompt *widget.Text`**:
-   A static label component displaying `"COMMAND: "` to the left of the command input and cursor, styled with a blue background (`style.ANSI(4)`) and white text (`style.ANSI(15)`).
-5. **`cmdIn *widget.TextInput`**:
-   The single-line text input for ex commands. When the user presses `:` in Normal mode, `openCommand` opens the command line and directs focus to it. Pressing `<Esc>` cancels command mode, restores focus to the editor, and reverts the footer to the status bar.
-6. **`footer *footer`**:
-   A custom layout component managing `status`, `cmdPrompt`, and `cmdIn`. **Crucially, all children stay mounted at all times**; it toggles whether the status bar or the command prompt and input are laid out and visible. Keeping children mounted preserves `NodeID`s so event subscriptions (like `SubmitEvent`) never disconnect.
-7. **`host *widget.OverlayHost`**:
-   Wraps the dock layout as its bottom layer.
+2. **`editorPane *EditorPane`**:
+   The primary workspace component wrapping the editor buffer and the floating command line. Manages `cmdInput` within a centered `widget.Box` overlay when commanding is active. Handles keyboard shortcuts unconsumed by the inner editor, owns focus switching between editor and `cmdInput`, and prevents command keystrokes from bubbling to ancestor containers.
+3. **`footer *footer`**:
+   A dedicated 3-section status line pinned at the bottom: mode indicator on the left, file path or transient feedback message in the center, and wall clock on the right. Does not handle command input.
+4. **`menu *TopMenu`**:
+   The menu subsystem comprising `MenuBar` (mounted on `dock` at Top, Bottom, Left, or Right) and `MenuOverlay` (mounted on `OverlayHost` layer 1). Coordinates dropdown popups, cascading submenus, Alt accelerators (`Alt+f`, `Alt+o`, `Alt+h`), mnemonic accelerators, runtime keyset transitions, and modal dialogs.
+5. **`host *widget.OverlayHost`**:
+   Wraps the dock layout as layer 0 and hosts overlay cards (menu dropdowns, cascading submenus, and modals) on layer 1.
 
 ### Deep Dive: What `OverlayHost` Does
 

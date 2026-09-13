@@ -52,9 +52,11 @@ The editing panel is golib's `widget.Editor`, so it is modal and vim-flavoured
 out of the box: `i` inserts, `Esc` returns to Normal, `hjkl`/`w`/`b` move, `dd`
 deletes, `u` undoes, counts and visual modes work.
 
-The footer shows **MODE** on the left, the file path in the middle and the clock
-on the right. Typing `:` (or the configured leader key) turns that footer into a
-command line:
+The footer acts as a dedicated status reporter: **MODE** on the left, the file
+path or transient message in the middle, and the clock on the right.
+
+Typing `:` (or the configured leader key) opens a floating, centered command input
+box inside the editor pane:
 
 | Command | Effect |
 |---|---|
@@ -65,7 +67,25 @@ command line:
 | `:wq` | write, then quit |
 
 An unknown command is refused **by name** rather than ignored, so a typo says so
-instead of appearing to work.
+instead of appearing to work. Pressing `Esc` dismisses the command line and returns
+focus to the buffer editor.
+
+## Menu Bar
+
+The editor provides a Borland C++ 3.0 / Turbo Vision-style menu bar with File, Option,
+and Help categories (pegged to the right when docked horizontally):
+
+- **Activation & Accelerators**: Press `F10` to toggle the menu bar, or use dedicated
+  Alt accelerators: `Alt+F` (File), `Alt+O` (Option), `Alt+H` (Help).
+- **Mnemonic Navigation**: Menu items display accented hotkeys in red (`[F]ile`, `[O]ption`,
+  `[H]elp`, `[N]ew`, `[O]pen`, `[S]ave`, `E[x]it`, `[K]eymaps`, `[A]bout`).
+- **Cascading Submenus**: `Option -> Keymaps` opens a cascading submenu to the right
+  offering `1. Vim (modal)` and `2. Nano (modeless)`, allowing live runtime keyset switching.
+- **Modals**: Selecting `File -> Exit` opens an "Are you sure to quit?" confirmation modal.
+  Unimplemented items display a informative "Not Implemented" modal dialog.
+- **Configurable Placement**: The menu bar can be docked along any screen edge: `"top"`,
+  `"bottom"`, `"left"`, or `"right"`. When placed on the left or right, it renders as a
+  vertical navigation sidebar with selection highlights mirroring autodb's explorer panel.
 
 ## Configuration
 
@@ -83,6 +103,10 @@ HorizontalWrap = false
 # A single key that opens the command line, alongside ":" — which always works,
 # so a bad value here cannot lock you out.
 LeaderKey = " "
+
+[menu]
+# Docking placement edge for the menu bar: "top", "bottom", "left", or "right".
+Placement = "top"
 ```
 
 `editor.example.toml` states the defaults, and a test asserts it stays in sync

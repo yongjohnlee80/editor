@@ -165,12 +165,21 @@ type TopMenu struct {
 
 	bar     *MenuBar
 	overlay *MenuOverlay
+
+	resolver KeyResolver
 }
 
 // newTopMenu constructs the TopMenu subsystem with its categories and child components.
-func newTopMenu(cb TopMenuCallbacks) *TopMenu {
+func newTopMenu(cb TopMenuCallbacks, resolver ...KeyResolver) *TopMenu {
+	var res KeyResolver
+	if len(resolver) > 0 && resolver[0] != nil {
+		res = resolver[0]
+	} else {
+		res = NewDefaultKeyResolver(" ")
+	}
 	tm := &TopMenu{
 		cb:        cb,
+		resolver:  res,
 		placement: PlacementTop,
 		categories: []MenuCategory{
 			{
@@ -531,29 +540,25 @@ func (mb *MenuBar) HandleEvent(ev tui.Event) bool {
 
 	ctx := mb.ctx
 
-	// Alt key combinations trigger menu actions across all modes:
-	// Alt+f -> File, Alt+o -> Option, Alt+h -> Help, Alt toggle -> toggle menu.
-	if ke.Mods&tui.ModAlt != 0 {
-		switch ke.Code {
-		case 'f', 'F':
-			mb.menu.OpenCategory(0, ctx)
-			return true
-		case 'o', 'O':
-			mb.menu.OpenCategory(1, ctx)
-			return true
-		case 'h', 'H':
-			mb.menu.OpenCategory(2, ctx)
-			return true
-		default:
-			mb.menu.Toggle(ctx)
-			return true
+	// Route Alt accelerators and F10 toggle through the shared key resolver.
+	// Unrecognized Alt chords bubble to host/editor bindings.
+	if mb.menu.resolver != nil {
+		if action, ok := mb.menu.resolver.Resolve(ScopeEditorNormal, ke); ok {
+			switch action {
+			case ActionToggleMenuBar:
+				mb.menu.Toggle(ctx)
+				return true
+			case ActionOpenMenuFile:
+				mb.menu.OpenCategory(0, ctx)
+				return true
+			case ActionOpenMenuOption:
+				mb.menu.OpenCategory(1, ctx)
+				return true
+			case ActionOpenMenuHelp:
+				mb.menu.OpenCategory(2, ctx)
+				return true
+			}
 		}
-	}
-
-	// Backwards-compatible F10 toggle
-	if ke.Code == tui.KeyF10 {
-		mb.menu.Toggle(ctx)
-		return true
 	}
 
 	// When a modal is open, delegate event to modal handler

@@ -190,15 +190,13 @@ func (ep *EditorPane) HandleEvent(ev tui.Event) bool {
 	}
 
 	// Alt shortcuts and F10 trigger menu actions across all modes (including Insert / Nano).
-	if ke.Mods&tui.ModAlt != 0 || ke.Code == tui.KeyF10 {
-		if action, ok := ep.resolver.Resolve(ScopeEditorNormal, ke); ok {
-			switch action {
-			case ActionToggleMenuBar, ActionOpenMenuFile, ActionOpenMenuOption, ActionOpenMenuHelp:
-				if ep.sink != nil {
-					ep.sink(action)
-				}
-				return true
+	if action, ok := ep.resolver.Resolve(ScopeEditorNormal, ke); ok {
+		switch action {
+		case ActionToggleMenuBar, ActionOpenMenuFile, ActionOpenMenuOption, ActionOpenMenuHelp:
+			if ep.sink != nil {
+				ep.sink(action)
 			}
+			return true
 		}
 	}
 
@@ -248,6 +246,28 @@ func (ep *EditorPane) NodeID() tui.NodeID {
 // CmdInputNodeID returns the command input widget's stable NodeID.
 func (ep *EditorPane) CmdInputNodeID() tui.NodeID {
 	return ep.cmdInput.NodeID()
+}
+
+// FocusActive focuses the active focus component within EditorPane:
+// cmdInput if commanding, or the editor buffer otherwise.
+func (ep *EditorPane) FocusActive() {
+	if ep.ctx == nil {
+		return
+	}
+	if ep.commanding && ep.cmdInput != nil {
+		ep.ctx.FocusComponent(ep.cmdInput)
+	} else {
+		ep.ctx.FocusComponent(ep.editor)
+	}
+}
+
+// ActiveFocusTarget returns the component that currently receives focus within EditorPane:
+// cmdInput while commanding, or editor otherwise.
+func (ep *EditorPane) ActiveFocusTarget() tui.Component {
+	if ep.commanding && ep.cmdInput != nil {
+		return ep.cmdInput
+	}
+	return ep.editor
 }
 
 // Commanding reports whether the floating command line is currently active.

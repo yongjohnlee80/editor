@@ -594,3 +594,67 @@ func TestTopMenu_NotImplementedModal(t *testing.T) {
 		t.Fatal("modal and menu should be deactivated after Esc")
 	}
 }
+
+// TestReviewProbe_MenuDuringCommandLineRestoresCommandInput proves that opening and
+// dismissing a menu while the floating command line is open properly restores focus
+// to cmdInput rather than defaulting to the buffer editor.
+func TestReviewProbe_MenuDuringCommandLineRestoresCommandInput(t *testing.T) {
+	h := newHarness(t, DefaultConfig(), "")
+
+	// 1. type ':' to open the floating command line
+	h.typeText(":")
+	if !h.commanding() {
+		t.Fatal("expected commanding to be true after ':'")
+	}
+
+	// 2. press Alt+f to open File menu
+	if err := h.tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: 'f', Mods: tui.ModAlt}); err != nil {
+		t.Fatalf("Inject Alt+f: %v", err)
+	}
+	h.settle()
+	if !h.menuActive() {
+		t.Fatal("expected menu to be active after Alt+f")
+	}
+
+	// 3. press Escape twice (close dropdown, then close menu bar)
+	h.escape()
+	h.escape()
+	if h.menuActive() {
+		t.Fatal("expected menu to be inactive after double Escape")
+	}
+
+	// 4. type 'q'
+	h.typeText("q")
+
+	if !h.commanding() {
+		t.Fatal("expected commanding to remain true")
+	}
+	if got := h.cmdValue(); got != "q" {
+		t.Fatalf("CommandValue() = %q, want %q", got, "q")
+	}
+}
+
+// TestTopMenu_NormalRestoreFocus verifies that standard menu open and close
+// round-trip restores focus to the editor buffer for normal editing.
+func TestTopMenu_NormalRestoreFocus(t *testing.T) {
+	h := newHarness(t, DefaultConfig(), "")
+
+	// Open menu via F10, close via Esc
+	h.pressKey(tui.KeyF10)
+	if !h.menuActive() {
+		t.Fatal("expected menu active")
+	}
+	h.escape()
+	if h.menuActive() {
+		t.Fatal("expected menu inactive")
+	}
+
+	// Enter insert mode and type 'x'
+	h.typeText("ix")
+	h.escape()
+
+	screen := h.tb.String()
+	if !strings.Contains(screen, "x") {
+		t.Fatalf("expected editor buffer to contain 'x', screen:\n%s", screen)
+	}
+}

@@ -9,3 +9,7 @@ HorizontalWrap = false
 # A single key that opens the command line, alongside ":" — which always works,
 # so a bad value here cannot lock you out.
 LeaderKey = " "
+
+[menu]
+# Docking placement edge for the menu bar: "top", "bottom", "left", or "right".
+Placement = "top"
