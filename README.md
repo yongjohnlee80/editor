@@ -72,8 +72,8 @@ focus to the buffer editor.
 
 ## Menu Bar
 
-The editor provides a Borland C++ 3.0 / Turbo Vision-style menu bar with File, Option,
-and Help categories (pegged to the right when docked horizontally):
+The editor provides a Borland C++ 3.0 / Turbo Vision-style menu bar with File and
+Option categories on the left, and Help pegged to the right (when docked horizontally):
 
 - **Activation & Accelerators**: Press `F10` to toggle the menu bar, or use dedicated
   Alt accelerators: `Alt+F` (File), `Alt+O` (Option), `Alt+H` (Help).
@@ -82,7 +82,7 @@ and Help categories (pegged to the right when docked horizontally):
 - **Cascading Submenus**: `Option -> Keymaps` opens a cascading submenu to the right
   offering `1. Vim (modal)` and `2. Nano (modeless)`, allowing live runtime keyset switching.
 - **Modals**: Selecting `File -> Exit` opens an "Are you sure to quit?" confirmation modal.
-  Unimplemented items display a informative "Not Implemented" modal dialog.
+  Unimplemented items display an informative "Not Implemented" modal dialog.
 - **Configurable Placement**: The menu bar can be docked along any screen edge: `"top"`,
   `"bottom"`, `"left"`, or `"right"`. When placed on the left or right, it renders as a
   vertical navigation sidebar with selection highlights mirroring autodb's explorer panel.

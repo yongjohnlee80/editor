@@ -146,9 +146,9 @@ App (root tui.Component)
      │       └─ status (*widget.StatusBar)         [NORMAL  file.txt  14:22:00]
      │
      └─ Layer 1: menu.overlay (*MenuOverlay)
-         ├─ Dropdown Card (*widget.Box)
-         ├─ Cascading Submenu Card (*widget.Box)   (e.g. Keymaps -> 1. Vim, 2. Nano)
-         └─ Modals (*widget.Box)                   (Exit confirmation, Not Implemented)
+         ├─ Dropdown Card (painted via renderBoxFrame)
+         ├─ Cascading Submenu Card (painted via renderBoxFrame)   (e.g. Keymaps -> 1. Vim, 2. Nano)
+         └─ Modals (painted via renderBoxFrame)                   (Exit confirmation, Not Implemented)
 ```
 
 ### Component Roles
@@ -156,7 +156,7 @@ App (root tui.Component)
 1. **`editor *widget.Editor`**:
    The core text editing buffer. Owns the vi state machine (Normal vs. Insert mode), cursor navigation, line buffers, and text mutations.
 2. **`editorPane *EditorPane`**:
-   The primary workspace component wrapping the editor buffer and the floating command line. Manages `cmdInput` within a centered `widget.Box` overlay when commanding is active. Handles keyboard shortcuts unconsumed by the inner editor, owns focus switching between editor and `cmdInput`, and prevents command keystrokes from bubbling to ancestor containers.
+   The primary workspace component wrapping the editor buffer and the floating command line. Manages `cmdInput` within a centered `widget.Box` overlay when commanding is active. Handles keyboard shortcuts unconsumed by the inner editor, owns focus switching between editor and `cmdInput`, and consumes command/editing inputs while deliberately allowing unhandled keys and unrecognized Alt chords to bubble to ancestor containers.
 3. **`footer *footer`**:
    A dedicated 3-section status line pinned at the bottom: mode indicator on the left, file path or transient feedback message in the center, and wall clock on the right. Does not handle command input.
 4. **`menu *TopMenu`**:
