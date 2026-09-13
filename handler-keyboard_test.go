@@ -45,14 +45,14 @@ func TestDefaultKeyResolver_ScopeEditorNormal(t *testing.T) {
 		t.Errorf("got (%v, %v), want (ActionNone, false) on release", act, ok)
 	}
 
-	// Alt-modified key is ignored
+	// Super-modified key is ignored
 	act, ok = res.Resolve(ScopeEditorNormal, tui.KeyEvent{
 		Kind: tui.KeyPress,
 		Text: ":",
-		Mods: tui.ModAlt,
+		Mods: tui.ModSuper,
 	})
 	if ok || act != ActionNone {
-		t.Errorf("got (%v, %v), want (ActionNone, false) with Alt mod", act, ok)
+		t.Errorf("got (%v, %v), want (ActionNone, false) with Super mod", act, ok)
 	}
 
 	// Unrelated key is ignored
@@ -134,6 +134,37 @@ func TestDefaultKeyResolver_F10_TogglesMenuBar(t *testing.T) {
 		})
 		if !ok || act != ActionToggleMenuBar {
 			t.Errorf("scope %v: got (%v, %v), want (ActionToggleMenuBar, true)", scope, act, ok)
+		}
+	}
+}
+
+func TestDefaultKeyResolver_Alt_TriggersMenu(t *testing.T) {
+	res := NewDefaultKeyResolver(" ")
+
+	cases := []struct {
+		code rune
+		want KeyAction
+	}{
+		{'f', ActionOpenMenuFile},
+		{'F', ActionOpenMenuFile},
+		{'o', ActionOpenMenuOption},
+		{'O', ActionOpenMenuOption},
+		{'h', ActionOpenMenuHelp},
+		{'H', ActionOpenMenuHelp},
+		{'m', ActionToggleMenuBar},
+		{' ', ActionToggleMenuBar},
+	}
+
+	for _, scope := range []InputScope{ScopeEditorNormal, ScopeCommandLine} {
+		for _, tc := range cases {
+			act, ok := res.Resolve(scope, tui.KeyEvent{
+				Kind: tui.KeyPress,
+				Code: tc.code,
+				Mods: tui.ModAlt,
+			})
+			if !ok || act != tc.want {
+				t.Errorf("scope %v, key %c with Alt: got (%v, %v), want (%v, true)", scope, tc.code, act, ok, tc.want)
+			}
 		}
 	}
 }

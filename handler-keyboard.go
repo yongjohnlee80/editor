@@ -39,6 +39,15 @@ const (
 
 	// ActionToggleMenuBar requests activating or deactivating the top menu bar.
 	ActionToggleMenuBar
+
+	// ActionOpenMenuFile requests activating the menu and opening File dropdown.
+	ActionOpenMenuFile
+
+	// ActionOpenMenuOption requests activating the menu and opening Option dropdown.
+	ActionOpenMenuOption
+
+	// ActionOpenMenuHelp requests activating the menu and opening Help dropdown.
+	ActionOpenMenuHelp
 )
 
 // KeyResolver resolves physical key events into semantic actions within an input scope.
@@ -71,13 +80,28 @@ func (r *DefaultKeyResolver) Resolve(scope InputScope, ev tui.KeyEvent) (KeyActi
 		return ActionNone, false
 	}
 
-	// Key events with modifiers other than shift/ctrl are ignored by default
-	// resolution so they can bubble to host or window-manager bindings.
-	if ev.Mods&(tui.ModAlt|tui.ModSuper|tui.ModMeta|tui.ModHyper) != 0 {
+	// Alt key combinations trigger menu actions across all scopes:
+	// Alt+f -> File, Alt+o -> Option, Alt+h -> Help, Alt (or any other Alt+key) -> Toggle Menu.
+	if ev.Mods&tui.ModAlt != 0 {
+		switch ev.Code {
+		case 'f', 'F':
+			return ActionOpenMenuFile, true
+		case 'o', 'O':
+			return ActionOpenMenuOption, true
+		case 'h', 'H':
+			return ActionOpenMenuHelp, true
+		default:
+			return ActionToggleMenuBar, true
+		}
+	}
+
+	// Key events with other window-manager modifiers (super/meta/hyper) are ignored
+	// by default resolution so they can bubble.
+	if ev.Mods&(tui.ModSuper|tui.ModMeta|tui.ModHyper) != 0 {
 		return ActionNone, false
 	}
 
-	// <F10> toggles the top menu bar across all input scopes.
+	// <F10> toggles the menu bar across all input scopes (backwards-compatible alias).
 	if ev.Code == tui.KeyF10 {
 		return ActionToggleMenuBar, true
 	}

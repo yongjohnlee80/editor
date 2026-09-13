@@ -20,6 +20,7 @@ package editor
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/yongjohnlee80/golib/tui"
@@ -77,11 +78,28 @@ func New(cfg Config, path string, quit func()) (*App, error) {
 	//   │  │  footer (status bar)     ← pinned bottom │ │
 	//   │  └─────────────────────────────────────────-┘ │
 	//   └──────────────────────────────────────────────-┘
-	// The menu is pinned to the top edge; the footer is pinned to the bottom
-	// edge; the editorPane expands to fill the remaining space between them.
+	// placement configures where the menu bar is docked: Top, Bottom, Left, or Right.
+	placement := MenuPlacement(strings.ToLower(cfg.Menu.Placement))
+	if placement == "" {
+		placement = PlacementTop
+	}
+	a.menu.SetPlacement(placement)
+
 	dock := tui.NewDock()
-	dock.Pin(tui.DockTop, a.menu.Bar())
-	dock.Pin(tui.DockBottom, a.footer)
+	switch placement {
+	case PlacementBottom:
+		dock.Pin(tui.DockBottom, a.footer)
+		dock.Pin(tui.DockBottom, a.menu.Bar())
+	case PlacementLeft:
+		dock.Pin(tui.DockLeft, a.menu.Bar())
+		dock.Pin(tui.DockBottom, a.footer)
+	case PlacementRight:
+		dock.Pin(tui.DockRight, a.menu.Bar())
+		dock.Pin(tui.DockBottom, a.footer)
+	default:
+		dock.Pin(tui.DockTop, a.menu.Bar())
+		dock.Pin(tui.DockBottom, a.footer)
+	}
 	dock.Add(a.editorPane)
 
 	// host wraps the dock in an OverlayHost so that modal widgets and dropdown
@@ -244,7 +262,7 @@ func (a *App) Layout(c tui.Constraints) tui.Size {
 // entirely produced by its mounted child hierarchy (a.host).
 func (a *App) Render(tui.Surface) {}
 
-// HandleEvent handles periodic clock ticks and global F10 menu bar toggling.
+// HandleEvent handles periodic clock ticks, Alt menu shortcuts, and F10 menu toggling.
 // Keyboard events are otherwise handled locally within EditorPane or MenuBar.
 func (a *App) HandleEvent(ev tui.Event) bool {
 	switch e := ev.(type) {
@@ -252,9 +270,27 @@ func (a *App) HandleEvent(ev tui.Event) bool {
 		a.refresh()
 		return true
 	case tui.KeyEvent:
-		if e.Kind != tui.KeyRelease && e.Code == tui.KeyF10 {
-			a.toggleMenuBar()
-			return true
+		if e.Kind != tui.KeyRelease {
+			if e.Mods&tui.ModAlt != 0 {
+				switch e.Code {
+				case 'f', 'F':
+					a.openMenuCategory(0)
+					return true
+				case 'o', 'O':
+					a.openMenuCategory(1)
+					return true
+				case 'h', 'H':
+					a.openMenuCategory(2)
+					return true
+				default:
+					a.toggleMenuBar()
+					return true
+				}
+			}
+			if e.Code == tui.KeyF10 {
+				a.toggleMenuBar()
+				return true
+			}
 		}
 	}
 	return false
@@ -271,7 +307,18 @@ func (a *App) handleKeyAction(action KeyAction) {
 		a.closeCommand()
 	case ActionToggleMenuBar:
 		a.toggleMenuBar()
+	case ActionOpenMenuFile:
+		a.openMenuCategory(0)
+	case ActionOpenMenuOption:
+		a.openMenuCategory(1)
+	case ActionOpenMenuHelp:
+		a.openMenuCategory(2)
 	}
+}
+
+// openMenuCategory activates the menu and directly opens the requested category dropdown.
+func (a *App) openMenuCategory(idx int) {
+	a.menu.OpenCategory(idx, a.ctx)
 }
 
 // toggleMenuBar toggles activation of the top menu bar.

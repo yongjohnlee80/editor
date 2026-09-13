@@ -24,25 +24,29 @@ func TestDefaultConfig(t *testing.T) {
 func TestParse_Accepts(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {
-		in   string
-		wrap bool
-		lead string
+		in        string
+		wrap      bool
+		lead      string
+		placement string
 	}{
-		"empty file keeps every default": {"", false, " "},
-		"both sections": {`
+		"empty file keeps every default": {"", false, " ", "top"},
+		"all sections": {`
 [editor]
 HorizontalWrap = true
 
 [keyboard]
 LeaderKey = ","
-`, true, ","},
-		// A file that sets ONE key must not reset the other section: the
+
+[menu]
+Placement = "left"
+`, true, ",", "left"},
+		// A file that sets ONE key must not reset the other sections: the
 		// parse layers onto the defaults rather than replacing them.
-		"partial file layers onto defaults": {"[editor]\nHorizontalWrap = true\n", true, " "},
-		"comments and blank lines":          {"# top\n\n[editor]  # section\nHorizontalWrap = false\n", false, " "},
+		"partial file layers onto defaults": {"[editor]\nHorizontalWrap = true\n", true, " ", "top"},
+		"comments and blank lines":          {"# top\n\n[editor]  # section\nHorizontalWrap = false\n", false, " ", "top"},
 		// '#' inside quotes is a value, not a comment.
-		"hash inside a quoted value": {"[keyboard]\nLeaderKey = \"#\"\n", false, "#"},
-		"whitespace is tolerated":    {"  [editor]  \n  HorizontalWrap   =   true  \n", true, " "},
+		"hash inside a quoted value": {"[keyboard]\nLeaderKey = \"#\"\n", false, "#", "top"},
+		"whitespace is tolerated":    {"  [editor]  \n  HorizontalWrap   =   true  \n", true, " ", "top"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -56,13 +60,15 @@ LeaderKey = ","
 			if got.Keyboard.LeaderKey != tc.lead {
 				t.Errorf("LeaderKey = %q, want %q", got.Keyboard.LeaderKey, tc.lead)
 			}
+			if got.Menu.Placement != tc.placement {
+				t.Errorf("Placement = %q, want %q", got.Menu.Placement, tc.placement)
+			}
 		})
 	}
 }
 
-// Every rejection is an ErrInvalidArgument, and each is REFUSED rather than
-// skipped: a typo that silently has no effect is worse than a startup failure,
-// because the setting looks applied.
+// Parse rejects unknown keys and malformed values: silently ignoring an unrecognised
+// key is worse than refusing to start, because the setting looks applied.
 func TestParse_Refuses(t *testing.T) {
 	t.Parallel()
 	for name, in := range map[string]string{
@@ -75,6 +81,7 @@ func TestParse_Refuses(t *testing.T) {
 		"unquoted leader":        "[keyboard]\nLeaderKey = x\n",
 		"multi-rune leader":      "[keyboard]\nLeaderKey = \"gg\"\n",
 		"empty leader":           "[keyboard]\nLeaderKey = \"\"\n",
+		"invalid menu placement": "[menu]\nPlacement = \"floating\"\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

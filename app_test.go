@@ -178,6 +178,14 @@ func (h *harness) pressKey(code rune) {
 	h.settle()
 }
 
+func (h *harness) pressKeyMod(code rune, mods tui.Mods) {
+	h.t.Helper()
+	if err := h.tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: code, Mods: mods}); err != nil {
+		h.t.Fatalf("Inject Key %v with mods %v: %v", code, mods, err)
+	}
+	h.settle()
+}
+
 // ":" opens the command line, and ":w" writes the buffer to disk.
 func TestCommand_WriteSavesTheBuffer(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "out.txt")
@@ -421,7 +429,8 @@ func TestTopMenu_F10TogglesMenuBar(t *testing.T) {
 	}
 }
 
-// Navigating to Option -> Keymaps allows switching between Vim and Nano keymaps.
+// Navigating to Option -> Keymaps opens a cascading submenu on the right allowing
+// switching between Vim and Nano keymaps.
 func TestTopMenu_KeymapSwitchModal(t *testing.T) {
 	h := newHarness(t, DefaultConfig(), "")
 
@@ -438,12 +447,12 @@ func TestTopMenu_KeymapSwitchModal(t *testing.T) {
 	// Open dropdown
 	h.pressKey(tui.KeyEnter)
 
-	// Open Keymaps modal (first item in Option)
+	// Open Keymaps cascading submenu on the right
 	h.pressKey(tui.KeyEnter)
 
 	modalScreen := h.tb.String()
-	if !strings.Contains(modalScreen, "Select Editor Keymap") {
-		t.Fatalf("Keymaps modal was not rendered; screen:\n%s", modalScreen)
+	if !strings.Contains(modalScreen, "Keymaps") || !strings.Contains(modalScreen, "Nano (modeless)") {
+		t.Fatalf("Keymaps cascading submenu was not rendered; screen:\n%s", modalScreen)
 	}
 
 	// Press '2' to switch to Nano
@@ -471,6 +480,69 @@ func TestTopMenu_KeymapSwitchModal(t *testing.T) {
 	if msg := h.message(); !strings.Contains(msg, "Vim") {
 		t.Errorf("expected status message mentioning Vim, got %q", msg)
 	}
+}
+
+// Alt shortcuts (Alt+f, Alt+o, Alt+h) trigger menu categories directly.
+func TestTopMenu_AltShortcuts(t *testing.T) {
+	h := newHarness(t, DefaultConfig(), "")
+
+	// Alt+f opens File dropdown directly
+	h.pressKeyMod('f', tui.ModAlt)
+	if !h.menuActive() {
+		t.Fatal("Alt+f did not activate menu")
+	}
+	screen := h.tb.String()
+	if !strings.Contains(screen, "New") || !strings.Contains(screen, "Exit") {
+		t.Fatalf("File dropdown items not visible after Alt+f; screen:\n%s", screen)
+	}
+
+	// Hotkey 'x' selects and executes Exit
+	h.pressKey('x')
+	screen = h.tb.String()
+	if !strings.Contains(screen, "Are you sure to quit?") {
+		t.Fatalf("Exit confirmation modal did not open on hotkey 'x'; screen:\n%s", screen)
+	}
+	h.pressKey('n') // dismiss
+
+	// Alt+o directly opens Option dropdown
+	h.pressKeyMod('o', tui.ModAlt)
+	if !h.menuActive() {
+		t.Fatal("Alt+o did not activate menu")
+	}
+	// Hotkey 'k' opens cascading submenu
+	h.pressKey('k')
+	screen = h.tb.String()
+	if !strings.Contains(screen, "Nano (modeless)") {
+		t.Fatalf("cascading submenu not open on 'k'; screen:\n%s", screen)
+	}
+	// Select Nano
+	h.pressKey('2')
+	if ks := h.keyset(); ks != widget.KeysetNano {
+		t.Fatalf("keyset after Alt+o -> k -> 2 = %v, want KeysetNano", ks)
+	}
+}
+
+// Menu can be placed on the left side (explorer style).
+func TestTopMenu_PlacementLeft(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Menu.Placement = "left"
+	h := newHarness(t, cfg, "")
+
+	screen := h.tb.String()
+	if !strings.Contains(screen, "Menu") || !strings.Contains(screen, "File") {
+		t.Fatalf("left menu panel not rendered; screen:\n%s", screen)
+	}
+
+	// Alt+f opens File dropdown to the right of the sidemenu
+	h.pressKeyMod('f', tui.ModAlt)
+	if !h.menuActive() {
+		t.Fatal("Alt+f failed to activate left sidemenu")
+	}
+	screen = h.tb.String()
+	if !strings.Contains(screen, "Exit") {
+		t.Fatalf("File dropdown not visible next to left sidemenu; screen:\n%s", screen)
+	}
+	h.escape()
 }
 
 // File -> Exit opens the exit modal and can be dismissed without quitting.
