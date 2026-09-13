@@ -21,7 +21,16 @@ var commandPromptStyle = style.New().
 // the middle of the pane.
 //
 // EditorPane processes all keyboard-related events including buffer text edits
-// and ex commands.
+// and ex commands:
+//
+//	┌ [title] ──────────────────────────────────────────┐
+//	│ buffer line 1                                     │
+//	│ buffer line 2                                     │
+//	│              ╭── COMMAND: ──────────────────╮     │
+//	│              │ :w                           │     │
+//	│              ╰──────────────────────────────╯     │
+//	│ buffer line 3                                     │
+//	└───────────────────────────────────────────────────┘
 //
 // # Always-mounted design
 //
