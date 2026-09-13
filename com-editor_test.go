@@ -167,6 +167,32 @@ func TestEditorPane_MarkDirtyUpdatesTitle(t *testing.T) {
 	}
 }
 
+func TestEditorPane_OpenAndCloseCommand(t *testing.T) {
+	ep, err := newTestEditorPane(DefaultConfig(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep.Commanding() {
+		t.Error("expected commanding to be false initially")
+	}
+
+	ep.OpenCommand("w ")
+	if !ep.Commanding() {
+		t.Error("expected commanding to be true after OpenCommand")
+	}
+	if got := ep.CommandValue(); got != "w " {
+		t.Errorf("expected command value 'w ', got %q", got)
+	}
+
+	ep.CloseCommand()
+	if ep.Commanding() {
+		t.Error("expected commanding to be false after CloseCommand")
+	}
+	if got := ep.CommandValue(); got != "" {
+		t.Errorf("expected command value empty, got %q", got)
+	}
+}
+
 var testResolver = NewDefaultKeyResolver(" ")
 var testSink = func(KeyAction) {}
 

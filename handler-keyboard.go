@@ -19,7 +19,7 @@ const (
 	// ScopeEditorNormal applies when the editor buffer is in Normal mode.
 	ScopeEditorNormal
 
-	// ScopeCommandLine applies when the footer command line is active.
+	// ScopeCommandLine applies when the floating command line is active.
 	ScopeCommandLine
 )
 
