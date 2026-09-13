@@ -6,13 +6,16 @@
 //
 //	┌ path/to/file ──────────────┐
 //	│ 1 the vim editor panel     │
-//	│ 2                          │
+//	│   ╭── COMMAND: ───────╮    │
+//	│   │ :w                │    │
+//	│   ╰───────────────────╯    │
 //	└────────────────────────────┘
 //	 NORMAL   path/to/file   14:22
 //
-// The footer doubles as the command line: typing ":" replaces the status
-// segments with an input, which is what vim does and what makes ":q" and ":w"
-// land where a vim user looks for them.
+// The command line is rendered as a floating TextInput box centered in the
+// middle of EditorPane when activated (e.g. typing ":" in Normal mode). The
+// footer's sole responsibility is statistics and status reporting (mode, path
+// or transient message, time).
 package editor
 
 import (
