@@ -42,21 +42,16 @@ func New(cfg Config, path string, quit func()) (*App, error) {
 		return nil, err
 	}
 
-	// footer composes the status bar, command prompt, and command input into
-	// a single strip. In normal mode it shows the status bar; in command mode
-	// it replaces the status segments with the prompt + input pair.
-	a.footer, err = newFooter(resolver, sink)
-	if err != nil {
-		return nil, err
-	}
+	// footer renders the three-segment status bar at the bottom.
+	a.footer = newFooter()
 
 	// dock is the top-level layout container. It describes the screen from
 	// the outside in:
 	//   ┌─ OverlayHost (modal layer) ──────────────────┐
 	//   │  ┌─ Dock ──────────────────────────────────┐ │
-	//   │  │  editorPane (editor + border) ← fills   │ │
+	//   │  │  editorPane (editor + cmdline) ← fills  │ │
 	//   │  │──────────────────────────────────────────│ │
-	//   │  │  footer (status / cmd)   ← pinned bottom │ │
+	//   │  │  footer (status bar)     ← pinned bottom │ │
 	//   │  └─────────────────────────────────────────-┘ │
 	//   └──────────────────────────────────────────────-┘
 	// The footer is pinned to the bottom edge; the editorPane expands to fill
@@ -83,9 +78,9 @@ func New(cfg Config, path string, quit func()) (*App, error) {
 //
 // App is a thin orchestrator: it owns the layout shell (dock + overlay host),
 // the command-line lifecycle (open/close/run), and status-bar refresh. All
-// document-editing concerns (buffer text, file path, dirty state, file I/O)
-// live in EditorPane and the command registry; footer presentation and command
-// input live in Footer.
+// document-editing concerns (buffer text, file path, dirty state, file I/O,
+// floating command line) live in EditorPane and the command registry; footer
+// presentation lives in Footer.
 type App struct {
 	// cfg holds user/distro configuration (e.g. soft wrapping, leader key).
 	cfg Config
@@ -97,14 +92,13 @@ type App struct {
 	// component's lifetime; used for layout, focus, and dirty notifications.
 	ctx *tui.Context
 
-	// editorPane owns the editor widget, box, file path, and dirty state.
+	// editorPane owns the editor widget, box, floating command line, file path, and dirty state.
 	// App interacts with it through a narrow surface: NodeID, Mode,
-	// MarkDirty, and title. EditorPane also implements Document for OS commands.
+	// MarkDirty, title, OpenCommand, and CloseCommand. EditorPane also implements Document for OS commands.
 	editorPane *EditorPane
 
-	// footer manages swapping between status and command input at the bottom
-	// of the screen while keeping both mounted so NodeIDs and event subscriptions
-	// remain stable.
+	// footer manages status bar presentation (statistics, mode, clock) at the bottom
+	// of the screen.
 	footer *Footer
 
 	// host is the root OverlayHost (embedding *tui.Stack) wrapping the main dock
@@ -199,7 +193,7 @@ func (a *App) Init(ctx *tui.Context) {
 	// SUBMIT belongs to the command input; its value is dispatched as an editor
 	// command rather than inserted into the active buffer.
 	tui.SubscribeScoped(ctx, func(ev widget.SubmitEvent) {
-		if ev.Owner == a.footer.InputNodeID() {
+		if ev.Owner == a.editorPane.CmdInputNodeID() {
 			a.runCommand(ev.Value)
 		}
 	})
@@ -223,8 +217,7 @@ func (a *App) Layout(c tui.Constraints) tui.Size {
 func (a *App) Render(tui.Surface) {}
 
 // HandleEvent handles periodic clock ticks to update the status line time.
-// All keyboard events are handled locally within focused components (EditorPane
-// and Footer) and dispatched to App synchronously via handleKeyAction.
+// Keyboard events are handled locally within EditorPane.
 func (a *App) HandleEvent(ev tui.Event) bool {
 	switch ev.(type) {
 	case tui.TickEvent:
@@ -246,19 +239,17 @@ func (a *App) handleKeyAction(action KeyAction) {
 	}
 }
 
-// openCommand shows the command line, seeded with prefill. Esc cancels, which
-// bubbles from the focused TextInput to App.handleKey.
+// openCommand shows the command line, seeded with prefill.
 func (a *App) openCommand(prefill string) {
 	a.message = ""
-	a.footer.OpenCommand(prefill)
+	a.editorPane.OpenCommand(prefill)
 	a.refresh()
 }
 
 // closeCommand hides the command input, clears its buffer, restores focus to the
 // editor, and requests layout and footer refreshes.
 func (a *App) closeCommand() {
-	a.footer.CloseCommand()
-	a.ctx.FocusComponent(a.editorPane)
+	a.editorPane.CloseCommand()
 	a.refresh()
 }
 

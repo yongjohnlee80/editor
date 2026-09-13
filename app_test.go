@@ -54,7 +54,7 @@ func (h *harness) read(fn func()) {
 func (h *harness) commanding() bool {
 	h.t.Helper()
 	var v bool
-	h.read(func() { v = h.app.footer.commanding })
+	h.read(func() { v = h.app.editorPane.commanding })
 	return v
 }
 
@@ -68,7 +68,7 @@ func (h *harness) message() string {
 func (h *harness) cmdValue() string {
 	h.t.Helper()
 	var v string
-	h.read(func() { v = h.app.footer.CommandValue() })
+	h.read(func() { v = h.app.editorPane.CommandValue() })
 	return v
 }
 
@@ -293,7 +293,7 @@ func TestCommand_EscapeCancelsCommandLine(t *testing.T) {
 	}
 }
 
-// The command line displays "COMMAND: " on the left side of the cursor when opened.
+// The floating command line displays "COMMAND:" prompt centered in the editor when opened.
 func TestCommand_DisplaysPromptAndCursorPosition(t *testing.T) {
 	h := newHarness(t, DefaultConfig(), "")
 
@@ -304,52 +304,36 @@ func TestCommand_DisplaysPromptAndCursorPosition(t *testing.T) {
 
 	rendered := h.tb.String()
 	if !strings.Contains(rendered, "COMMAND:") {
-		t.Fatalf("bottom line did not display COMMAND: prompt; screen:\n%s", rendered)
-	}
-
-	snap := h.tb.Snapshot()
-	cell := snap[23][0] // first character 'C' of "COMMAND: "
-	if cell.Content != "C" {
-		t.Errorf("snap[23][0].Content = %q, want 'C'", cell.Content)
-	}
-	if bg, ok := commandPromptStyle.GetBackground(); ok {
-		if idx, ok := bg.ANSIIndex(); ok && int(cell.Attrs.BG.Index) != idx {
-			t.Errorf("prompt cell BG index = %d, want %d", cell.Attrs.BG.Index, idx)
-		}
-	}
-	if fg, ok := commandPromptStyle.GetForeground(); ok {
-		if idx, ok := fg.ANSIIndex(); ok && int(cell.Attrs.FG.Index) != idx {
-			t.Errorf("prompt cell FG index = %d, want %d", cell.Attrs.FG.Index, idx)
-		}
+		t.Fatalf("editor did not display floating COMMAND: prompt; screen:\n%s", rendered)
 	}
 
 	x, y, visible := h.tb.CursorPos()
 	if !visible {
 		t.Fatal("cursor must be visible in command line")
 	}
-	wantX := len("COMMAND: ")
-	if x != wantX {
-		t.Errorf("cursor X = %d, want %d (on the right of %q)", x, wantX, "COMMAND: ")
-	}
-	if y != 23 {
-		t.Errorf("cursor Y = %d, want 23 (bottom line)", y)
+	// Floating command box is vertically centered in the 23-row editor pane (y = (23-3)/2 = 10; inner row 11)
+	if y != 11 {
+		t.Errorf("cursor Y = %d, want 11 (vertically centered floating box inner row)", y)
 	}
 
-	// Typing a character advances the cursor past the prompt.
+	// Typing a character advances the cursor.
 	h.typeText("q")
-	x2, _, _ := h.tb.CursorPos()
-	if x2 != wantX+1 {
-		t.Errorf("cursor X after typing = %d, want %d", x2, wantX+1)
+	x2, y2, _ := h.tb.CursorPos()
+	if y2 != y {
+		t.Errorf("cursor Y changed after typing: got %d, want %d", y2, y)
+	}
+	if x2 != x+1 {
+		t.Errorf("cursor X after typing = %d, want %d", x2, x+1)
 	}
 
-	// Esc exits and restores the status bar.
+	// Esc exits and restores focus to editor.
 	h.escape()
 	if h.commanding() {
 		t.Fatal("Esc did not close the command line")
 	}
 	restored := h.tb.String()
 	if !strings.Contains(restored, "NORMAL") {
-		t.Errorf("status bar was not restored after Esc; screen:\n%s", restored)
+		t.Errorf("status bar was not present after Esc; screen:\n%s", restored)
 	}
 }
 

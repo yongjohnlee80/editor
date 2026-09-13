@@ -122,12 +122,4 @@ func TestComponent_NilWiringRejection(t *testing.T) {
 	if _, err := newEditorPane(cfg, "", NewDefaultKeyResolver(" "), nil); err == nil {
 		t.Error("newEditorPane with nil sink must return error")
 	}
-
-	// Footer rejects nil resolver or sink
-	if _, err := newFooter(nil, func(KeyAction) {}); err == nil {
-		t.Error("newFooter with nil resolver must return error")
-	}
-	if _, err := newFooter(NewDefaultKeyResolver(" "), nil); err == nil {
-		t.Error("newFooter with nil sink must return error")
-	}
 }
