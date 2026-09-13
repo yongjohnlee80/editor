@@ -179,7 +179,7 @@ func (ep *EditorPane) HandleEvent(ev tui.Event) bool {
 					ep.sink(action)
 				}
 				return true
-			case ActionToggleMenuBar:
+			case ActionToggleMenuBar, ActionOpenMenuFile, ActionOpenMenuOption, ActionOpenMenuHelp:
 				if ep.sink != nil {
 					ep.sink(action)
 				}
@@ -189,14 +189,21 @@ func (ep *EditorPane) HandleEvent(ev tui.Event) bool {
 		return false
 	}
 
-	// In non-Normal modes (Insert mode or Nano modeless editing), F10 toggles the menu bar.
-	if ep.Mode() != widget.ModeNormal {
-		if ke.Code == tui.KeyF10 {
-			if ep.sink != nil {
-				ep.sink(ActionToggleMenuBar)
+	// Alt shortcuts and F10 trigger menu actions across all modes (including Insert / Nano).
+	if ke.Mods&tui.ModAlt != 0 || ke.Code == tui.KeyF10 {
+		if action, ok := ep.resolver.Resolve(ScopeEditorNormal, ke); ok {
+			switch action {
+			case ActionToggleMenuBar, ActionOpenMenuFile, ActionOpenMenuOption, ActionOpenMenuHelp:
+				if ep.sink != nil {
+					ep.sink(action)
+				}
+				return true
 			}
-			return true
 		}
+	}
+
+	// Normal mode keyboard handling
+	if ep.Mode() != widget.ModeNormal {
 		return false
 	}
 	if action, ok := ep.resolver.Resolve(ScopeEditorNormal, ke); ok {
@@ -207,7 +214,7 @@ func (ep *EditorPane) HandleEvent(ev tui.Event) bool {
 				ep.sink(action)
 			}
 			return true
-		case ActionToggleMenuBar:
+		case ActionToggleMenuBar, ActionOpenMenuFile, ActionOpenMenuOption, ActionOpenMenuHelp:
 			if ep.sink != nil {
 				ep.sink(action)
 			}

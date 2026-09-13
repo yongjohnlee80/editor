@@ -209,7 +209,7 @@ func TestMenuBar_ModalExit_Flow(t *testing.T) {
 	}
 }
 
-func TestMenuBar_ModalKeymaps_Flow(t *testing.T) {
+func TestMenuBar_CascadingSubmenuKeymaps_Flow(t *testing.T) {
 	var switchedKeyset widget.Keyset
 	var statusMsg string
 	tm := newTopMenu(TopMenuCallbacks{
@@ -222,14 +222,16 @@ func TestMenuBar_ModalKeymaps_Flow(t *testing.T) {
 	})
 	mb := tm.Bar()
 
-	// Navigate to Option -> Keymaps
-	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyF10})   // activate
-	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyRight}) // move to Option
-	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyDown})  // open dropdown
-	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter}) // select Keymaps
+	// Navigate to Option -> Keymaps using Alt+o shortcut
+	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: 'o', Mods: tui.ModAlt})
+	if !tm.DropdownOpen() || tm.selectedCategory != 1 {
+		t.Fatalf("Alt+o must open Option dropdown: dropdownOpen=%v, cat=%d", tm.DropdownOpen(), tm.selectedCategory)
+	}
 
-	if tm.modal != modalKeymaps {
-		t.Fatalf("modal = %v, want modalKeymaps", tm.modal)
+	// Press hotkey 'k' to open cascading submenu on the right
+	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: 'k'})
+	if !tm.SubmenuOpen() {
+		t.Fatal("hotkey 'k' must open cascading submenu")
 	}
 
 	// Select Nano using shortcut '2'
@@ -240,16 +242,73 @@ func TestMenuBar_ModalKeymaps_Flow(t *testing.T) {
 	if statusMsg == "" {
 		t.Error("status message should be set on keymap switch")
 	}
-	if tm.modal != modalNone {
-		t.Errorf("modal = %v, want modalNone after commit", tm.modal)
+	if tm.Active() {
+		t.Errorf("menu should deactivate after selecting keymap")
 	}
 
-	// Re-open and select Vim using arrow down + Enter
-	tm.openKeymapsModal(nil)
-	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyUp}) // toggle to Vim (0)
-	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
+	// Re-open and select Vim using '1'
+	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: 'o', Mods: tui.ModAlt})
+	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyRight}) // open submenu
+	if !tm.SubmenuOpen() {
+		t.Fatal("Right arrow must open cascading submenu")
+	}
+	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: '1'})
 	if switchedKeyset != widget.KeysetVim {
 		t.Errorf("switchedKeyset = %v, want KeysetVim", switchedKeyset)
+	}
+}
+
+func TestMenuBar_MnemonicHotkeys(t *testing.T) {
+	tm := newTopMenu(TopMenuCallbacks{})
+	mb := tm.Bar()
+
+	// Activate menu
+	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyF10})
+
+	// Press 'h' -> selects Help and opens dropdown
+	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: 'h'})
+	if !tm.DropdownOpen() || tm.selectedCategory != 2 {
+		t.Errorf("expected Help dropdown open, got cat=%d, open=%v", tm.selectedCategory, tm.DropdownOpen())
+	}
+
+	// Close dropdown
+	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEscape})
+
+	// Press 'f' -> selects File and opens dropdown
+	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: 'f'})
+	if !tm.DropdownOpen() || tm.selectedCategory != 0 {
+		t.Errorf("expected File dropdown open, got cat=%d, open=%v", tm.selectedCategory, tm.DropdownOpen())
+	}
+
+	// Press 'x' -> triggers Exit modal
+	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: 'x'})
+	if tm.modal != modalExit {
+		t.Errorf("hotkey 'x' should open Exit modal, got %v", tm.modal)
+	}
+}
+
+func TestMenuBar_PlacementLayout(t *testing.T) {
+	tm := newTopMenu(TopMenuCallbacks{})
+	mb := tm.Bar()
+
+	// Default: Top -> H = 1
+	sz := mb.Layout(tui.Constraints{MaxW: 80, MaxH: 24})
+	if sz.W != 80 || sz.H != 1 {
+		t.Errorf("Top placement layout = %+v, want (80, 1)", sz)
+	}
+
+	// Left: W = 16, H = MaxH (explorer style)
+	tm.SetPlacement(PlacementLeft)
+	sz = mb.Layout(tui.Constraints{MaxW: 80, MaxH: 24})
+	if sz.W != 16 || sz.H != 24 {
+		t.Errorf("Left placement layout = %+v, want (16, 24)", sz)
+	}
+
+	// Right: W = 16, H = MaxH
+	tm.SetPlacement(PlacementRight)
+	sz = mb.Layout(tui.Constraints{MaxW: 80, MaxH: 24})
+	if sz.W != 16 || sz.H != 24 {
+		t.Errorf("Right placement layout = %+v, want (16, 24)", sz)
 	}
 }
 

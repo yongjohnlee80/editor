@@ -18,6 +18,7 @@ import (
 type Config struct {
 	Editor   EditorConfig   `toml:"editor"`
 	Keyboard KeyboardConfig `toml:"keyboard"`
+	Menu     MenuConfig     `toml:"menu"`
 }
 
 // EditorConfig is the [editor] section.
@@ -42,12 +43,20 @@ type KeyboardConfig struct {
 	LeaderKey string `toml:"LeaderKey"`
 }
 
+// MenuConfig is the [menu] section.
+type MenuConfig struct {
+	// Placement configures the dock edge the menu bar pins to: "top", "bottom",
+	// "left", or "right". Defaults to "top".
+	Placement string `toml:"Placement"`
+}
+
 // DefaultConfig is the configuration used when no file is found, and the base
 // every parsed file is decoded onto.
 func DefaultConfig() Config {
 	return Config{
 		Editor:   EditorConfig{HorizontalWrap: false},
 		Keyboard: KeyboardConfig{LeaderKey: " "},
+		Menu:     MenuConfig{Placement: "top"},
 	}
 }
 
@@ -93,7 +102,7 @@ func Parse(r io.Reader) (Config, error) {
 			names = append(names, k.String())
 		}
 		return DefaultConfig(), errs.Wrap(errs.ErrInvalidArgument,
-			"unknown %s: %s (known: editor.HorizontalWrap, keyboard.LeaderKey)",
+			"unknown %s: %s (known: editor.HorizontalWrap, keyboard.LeaderKey, menu.Placement)",
 			plural("key", len(names)), strings.Join(names, ", "))
 	}
 	if err := cfg.validate(); err != nil {
@@ -105,7 +114,16 @@ func Parse(r io.Reader) (Config, error) {
 // validate rejects values that decode fine but cannot work.
 func (c Config) validate() error {
 	// Validate leader key syntax and collision with built-in vi bindings.
-	return ValidateLeaderKey(c.Keyboard.LeaderKey)
+	if err := ValidateLeaderKey(c.Keyboard.LeaderKey); err != nil {
+		return err
+	}
+	switch strings.ToLower(c.Menu.Placement) {
+	case "", "top", "bottom", "left", "right":
+		return nil
+	default:
+		return errs.Wrap(errs.ErrInvalidArgument,
+			"invalid menu.Placement %q (valid: top, bottom, left, right)", c.Menu.Placement)
+	}
 }
 
 func plural(word string, n int) string {
