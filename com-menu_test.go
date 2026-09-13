@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/yongjohnlee80/golib/tui"
+	"github.com/yongjohnlee80/golib/tui/style"
 	"github.com/yongjohnlee80/golib/tui/widget"
 )
 
@@ -377,5 +378,78 @@ func TestMenuOverlay_Layout(t *testing.T) {
 	sz = mo.Layout(tui.Constraints{MinW: 0, MaxW: 80, MinH: 0, MaxH: 24})
 	if sz.W != 80 || sz.H != 24 {
 		t.Errorf("modal overlay sz = %+v, want (80, 24)", sz)
+	}
+}
+
+func TestMenuStyle_Standalone(t *testing.T) {
+	// Nil receiver tests fallback to defaultMenuStyle
+	var nilStyle *MenuStyle
+	if nilStyle.Bar() != defaultMenuStyle.bar {
+		t.Fatal("nilStyle.Bar() did not return defaultMenuStyle.bar")
+	}
+	if nilStyle.Accent() != defaultMenuStyle.accent {
+		t.Fatal("nilStyle.Accent() did not return defaultMenuStyle.accent")
+	}
+	if nilStyle.Highlight() != defaultMenuStyle.highlight {
+		t.Fatal("nilStyle.Highlight() did not return defaultMenuStyle.highlight")
+	}
+	if nilStyle.HighlightAccent() != defaultMenuStyle.highlightAccent {
+		t.Fatal("nilStyle.HighlightAccent() did not return defaultMenuStyle.highlightAccent")
+	}
+	if nilStyle.Border() != defaultMenuStyle.border {
+		t.Fatal("nilStyle.Border() did not return defaultMenuStyle.border")
+	}
+	if nilStyle.ItemStyle(false) != defaultMenuStyle.bar {
+		t.Fatal("nilStyle.ItemStyle(false) did not return defaultMenuStyle.bar")
+	}
+	if nilStyle.ItemStyle(true) != defaultMenuStyle.highlight {
+		t.Fatal("nilStyle.ItemStyle(true) did not return defaultMenuStyle.highlight")
+	}
+	if nilStyle.AccentStyle(false) != defaultMenuStyle.accent {
+		t.Fatal("nilStyle.AccentStyle(false) did not return defaultMenuStyle.accent")
+	}
+	if nilStyle.AccentStyle(true) != defaultMenuStyle.highlightAccent {
+		t.Fatal("nilStyle.AccentStyle(true) did not return defaultMenuStyle.highlightAccent")
+	}
+
+	// Custom MenuStyle
+	bar := style.New().Foreground(style.ANSI(1))
+	acc := style.New().Foreground(style.ANSI(2))
+	hl := style.New().Foreground(style.ANSI(3))
+	hlAcc := style.New().Foreground(style.ANSI(4))
+	border := style.New().Foreground(style.ANSI(5))
+	custom := NewMenuStyle(bar, acc, hl, hlAcc, border)
+
+	if custom.Bar() != bar || custom.Accent() != acc || custom.Highlight() != hl ||
+		custom.HighlightAccent() != hlAcc || custom.Border() != border {
+		t.Fatal("custom MenuStyle getters did not return expected styles")
+	}
+	if custom.ItemStyle(false) != bar || custom.ItemStyle(true) != hl {
+		t.Fatal("custom ItemStyle did not match expected values")
+	}
+	if custom.AccentStyle(false) != acc || custom.AccentStyle(true) != hlAcc {
+		t.Fatal("custom AccentStyle did not match expected values")
+	}
+
+	tm := newTopMenu(TopMenuCallbacks{})
+	if tm.MenuStyle() != defaultMenuStyle {
+		t.Fatal("tm.MenuStyle() should return defaultMenuStyle when unset")
+	}
+	if tm.Bar().MenuStyle() != defaultMenuStyle {
+		t.Fatal("tm.Bar().MenuStyle() should return defaultMenuStyle when unset")
+	}
+
+	tm.SetStyle(custom)
+	if tm.MenuStyle() != custom {
+		t.Fatal("tm.MenuStyle() did not return custom style after SetStyle")
+	}
+	if tm.Bar().MenuStyle() != custom {
+		t.Fatal("tm.Bar().MenuStyle() did not return custom style after SetStyle")
+	}
+
+	// Test SetStyles convenience helper on MenuBar
+	tm.Bar().SetStyles(bar, acc, hl, hlAcc, border)
+	if tm.MenuStyle().Bar() != bar {
+		t.Fatal("Bar().SetStyles did not apply custom bar style")
 	}
 }

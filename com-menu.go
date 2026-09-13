@@ -29,81 +29,12 @@ const (
 	modalNotImplemented
 )
 
-var (
-	// Menu bar base styling: Borland Turbo Vision light gray fill with black text.
-	menuBarStyle = style.New().
-			Background(style.ANSI(7)).
-			Foreground(style.ANSI(0))
-
-	// Hotkey accent: bold red letter.
-	menuAccentStyle = style.New().
-			Background(style.ANSI(7)).
-			Foreground(style.ANSI(1)).
-			Bold(true)
-
-	// Selection highlight: autodb explorer cyan fill with black text (cursorRowStyle).
-	menuHighlightStyle = style.New().
-				Background(style.ANSI(6)).
-				Foreground(style.ANSI(0)).
-				Bold(true)
-
-	// Hotkey accent when selection highlight is active: red on cyan.
-	menuHighlightAccentStyle = style.New().
-					Background(style.ANSI(6)).
-					Foreground(style.ANSI(1)).
-					Bold(true)
-
-	// Dropdown and cascading submenu box border and body styling.
-	dropdownBorder = style.New().
-			Background(style.ANSI(7)).
-			Foreground(style.ANSI(0)).
-			Border(style.BorderNormal)
-
-	// Modal scrim background stipple style.
-	scrimStyle = style.New().Foreground(style.ANSI(8)).Faint(true)
-
-	// Modal window card styling.
-	modalCardStyle = style.New().
-			Background(style.ANSI(0)).
-			Foreground(style.ANSI(7)).
-			Border(style.BorderRounded)
-
-	modalTitleStyle = style.New().
-			Foreground(style.ANSI(14)).
-			Bold(true)
-
-	buttonNormalStyle = style.New().
-				Background(style.ANSI(7)).
-				Foreground(style.ANSI(0))
-
-	buttonFocusedStyle = style.New().
-				Background(style.ANSI(6)).
-				Foreground(style.ANSI(0)).
-				Bold(true)
-)
-
-// SubMenuItem represents an entry in a cascading submenu.
-type SubMenuItem struct {
-	Name      string
-	Hotkey    rune
-	HotkeyIdx int
-	Keyset    widget.Keyset
-}
-
-// MenuItem represents one entry within a dropdown category.
-type MenuItem struct {
-	Name      string
-	Hotkey    rune
-	HotkeyIdx int
-	Submenu   []SubMenuItem
-}
-
 // MenuCategory represents a top-level category on the menu bar (e.g. File, Option, Help).
 type MenuCategory struct {
 	Name      string
 	Hotkey    rune
 	HotkeyIdx int
-	Items     []MenuItem
+	Items     []*MenuItem
 }
 
 // TopMenuCallbacks holds the external actions triggered by menu items and modals.
@@ -128,7 +59,7 @@ type TopMenuCallbacks struct {
 //	│  │  └──────────────────┘└─────────────────────────────────┘ ││
 //	│  └──────────────────────────────────────────────────────────┘│
 //	│  ┌─ Dock ──────────────────────────────────────────────────┐ │
-//	│  │  MenuBar: [ File ] [ Option ]                    [ Help ]│ │ ← Configurable Edge
+//	│  │  MenuBar: [ File ] [ Option ]                   [ Help ]│ │ ← Configurable Edge
 //	│  │─────────────────────────────────────────────────────────│ │
 //	│  │  EditorPane (Buffer + Floating Command Line)            │ │
 //	│  │─────────────────────────────────────────────────────────│ │
@@ -162,9 +93,12 @@ type TopMenu struct {
 	exitChoice     int    // 0 = Yes, 1 = No
 	selectedKeymap int    // 0 = Vim, 1 = Nano
 	currentKeyset  widget.Keyset
+	activeModal    *Modal
 
 	bar     *MenuBar
 	overlay *MenuOverlay
+
+	style *MenuStyle
 
 	resolver KeyResolver
 }
@@ -178,47 +112,56 @@ func newTopMenu(cb TopMenuCallbacks, resolver ...KeyResolver) *TopMenu {
 		res = NewDefaultKeyResolver(" ")
 	}
 	tm := &TopMenu{
-		cb:        cb,
-		resolver:  res,
-		placement: PlacementTop,
-		categories: []MenuCategory{
-			{
-				Name:      "File",
-				Hotkey:    'f',
-				HotkeyIdx: 0,
-				Items: []MenuItem{
-					{Name: "New", Hotkey: 'n', HotkeyIdx: 0},
-					{Name: "Open", Hotkey: 'o', HotkeyIdx: 0},
-					{Name: "Save", Hotkey: 's', HotkeyIdx: 0},
-					{Name: "Exit", Hotkey: 'x', HotkeyIdx: 1}, // E[x]it
-				},
-			},
-			{
-				Name:      "Option",
-				Hotkey:    'o',
-				HotkeyIdx: 0,
-				Items: []MenuItem{
-					{
-						Name:      "Keymaps",
-						Hotkey:    'k',
-						HotkeyIdx: 0,
-						Submenu: []SubMenuItem{
-							{Name: "1. Vim  (modal)", Hotkey: '1', HotkeyIdx: 0, Keyset: widget.KeysetVim},
-							{Name: "2. Nano (modeless)", Hotkey: '2', HotkeyIdx: 0, Keyset: widget.KeysetNano},
-						},
-					},
-				},
-			},
-			{
-				Name:      "Help",
-				Hotkey:    'h',
-				HotkeyIdx: 0,
-				Items: []MenuItem{
-					{Name: "About", Hotkey: 'a', HotkeyIdx: 0},
-				},
+		cb:            cb,
+		resolver:      res,
+		placement:     PlacementTop,
+		currentKeyset: widget.KeysetVim,
+	}
+	tm.categories = []MenuCategory{
+		{
+			Name:      "File",
+			Hotkey:    'f',
+			HotkeyIdx: 0,
+			Items: []*MenuItem{
+				NewMenuItem("New", 'n', 0, func() {
+					tm.openNotImplemented("File -> New", nil)
+				}),
+				NewMenuItem("Open", 'o', 0, func() {
+					tm.openNotImplemented("File -> Open", nil)
+				}),
+				NewMenuItem("Save", 's', 0, func() {
+					tm.openNotImplemented("File -> Save", nil)
+				}),
+				NewMenuItem("Exit", 'x', 1, func() {
+					tm.openExitModal(nil)
+				}),
 			},
 		},
-		currentKeyset: widget.KeysetVim,
+		{
+			Name:      "Option",
+			Hotkey:    'o',
+			HotkeyIdx: 0,
+			Items: []*MenuItem{
+				NewMenuItemWithSubmenu("Keymaps", 'k', 0,
+					NewMenuItemWithKeyset("1. Vim  (modal)", '1', 0, widget.KeysetVim, func() {
+						tm.commitKeymap(widget.KeysetVim, nil)
+					}),
+					NewMenuItemWithKeyset("2. Nano (modeless)", '2', 0, widget.KeysetNano, func() {
+						tm.commitKeymap(widget.KeysetNano, nil)
+					}),
+				),
+			},
+		},
+		{
+			Name:      "Help",
+			Hotkey:    'h',
+			HotkeyIdx: 0,
+			Items: []*MenuItem{
+				NewMenuItem("About", 'a', 0, func() {
+					tm.openNotImplemented("Help -> About", nil)
+				}),
+			},
+		},
 	}
 
 	tm.bar = &MenuBar{menu: tm}
@@ -236,6 +179,34 @@ func (tm *TopMenu) Placement() MenuPlacement {
 	return tm.placement
 }
 
+// MenuStyle returns the active or fallback style configuration for the menu.
+func (tm *TopMenu) MenuStyle() *MenuStyle {
+	if tm.style == nil {
+		return defaultMenuStyle
+	}
+	return tm.style
+}
+
+// SetStyle configures a custom MenuStyle for the menu subsystem.
+func (tm *TopMenu) SetStyle(s *MenuStyle) *TopMenu {
+	tm.style = s
+	if tm.bar != nil && tm.bar.ctx != nil {
+		tm.bar.ctx.RequestLayout()
+		tm.bar.ctx.MarkDirty()
+	}
+	return tm
+}
+
+// SetStyles configures individual styling attributes for the menu subsystem.
+func (tm *TopMenu) SetStyles(bar, accent, highlight, highlightAccent, border style.Style) *TopMenu {
+	tm.style = NewMenuStyle(bar, accent, highlight, highlightAccent, border)
+	if tm.bar != nil && tm.bar.ctx != nil {
+		tm.bar.ctx.RequestLayout()
+		tm.bar.ctx.MarkDirty()
+	}
+	return tm
+}
+
 // Bar returns the menu bar component for mounting in Dock.
 func (tm *TopMenu) Bar() *MenuBar {
 	return tm.bar
@@ -248,7 +219,7 @@ func (tm *TopMenu) Overlay() *MenuOverlay {
 
 // Active reports whether the menu bar, an open dropdown, or an open modal has focus.
 func (tm *TopMenu) Active() bool {
-	return tm.active || tm.modal != modalNone
+	return tm.active || tm.modal != modalNone || tm.activeModal != nil
 }
 
 // DropdownOpen reports whether a dropdown menu is currently visible.
@@ -263,7 +234,12 @@ func (tm *TopMenu) SubmenuOpen() bool {
 
 // ModalActive reports whether a modal is currently displayed.
 func (tm *TopMenu) ModalActive() bool {
-	return tm.modal != modalNone
+	return tm.modal != modalNone || tm.activeModal != nil
+}
+
+// ActiveModal returns the currently active standalone modal widget, if any.
+func (tm *TopMenu) ActiveModal() *Modal {
+	return tm.activeModal
 }
 
 // Activate engages the menu bar, setting the cursor on the File menu.
@@ -299,10 +275,14 @@ func (tm *TopMenu) OpenCategory(catIdx int, ctx *tui.Context) {
 
 // Deactivate disengages the menu bar and any open dropdown/submenu, restoring focus to the editor.
 func (tm *TopMenu) Deactivate(ctx *tui.Context) {
+	if ctx == nil && tm.bar != nil {
+		ctx = tm.bar.ctx
+	}
 	tm.active = false
 	tm.dropdownOpen = false
 	tm.submenuOpen = false
 	tm.modal = modalNone
+	tm.activeModal = nil
 	if ctx != nil {
 		ctx.RequestLayout()
 		ctx.MarkDirty()
@@ -349,13 +329,18 @@ func (tm *TopMenu) executeItem(catIdx, itemIdx int, ctx *tui.Context) {
 	cat := tm.categories[catIdx]
 	item := cat.Items[itemIdx]
 
-	if len(item.Submenu) > 0 {
+	if item.HasSubmenu() {
 		tm.openSubmenu(ctx)
 		return
 	}
 
 	tm.dropdownOpen = false
 	tm.submenuOpen = false
+
+	if item.Action() != nil {
+		item.Trigger()
+		return
+	}
 
 	switch cat.Name {
 	case "File":
@@ -374,8 +359,28 @@ func (tm *TopMenu) executeItem(catIdx, itemIdx int, ctx *tui.Context) {
 }
 
 func (tm *TopMenu) openExitModal(ctx *tui.Context) {
+	if ctx == nil && tm.bar != nil {
+		ctx = tm.bar.ctx
+	}
 	tm.modal = modalExit
 	tm.exitChoice = 0 // default: Yes
+
+	yesBtn := NewButton("Yes", func() {
+		tm.modal = modalNone
+		tm.activeModal = nil
+		if tm.cb.OnQuit != nil {
+			tm.cb.OnQuit()
+		}
+	})
+	noBtn := NewButton("No", func() {
+		tm.Deactivate(ctx)
+	})
+
+	tm.activeModal = NewModal("Exit", "Are you sure to quit?", yesBtn, noBtn)
+	tm.activeModal.OnDismiss(func() {
+		tm.Deactivate(ctx)
+	})
+
 	if ctx != nil {
 		ctx.RequestLayout()
 		ctx.MarkDirty()
@@ -383,21 +388,71 @@ func (tm *TopMenu) openExitModal(ctx *tui.Context) {
 }
 
 func (tm *TopMenu) openKeymapsModal(ctx *tui.Context) {
-	tm.modal = modalKeymaps
-	if tm.currentKeyset == widget.KeysetNano {
-		tm.selectedKeymap = 1
-	} else {
-		tm.selectedKeymap = 0
+	if ctx == nil && tm.bar != nil {
+		ctx = tm.bar.ctx
 	}
+	tm.modal = modalKeymaps
+
+	vimBtn := NewButton("1. Vim (modal)", func() {
+		tm.commitKeymap(widget.KeysetVim, ctx)
+	})
+	nanoBtn := NewButton("2. Nano (modeless)", func() {
+		tm.commitKeymap(widget.KeysetNano, ctx)
+	})
+
+	initialSel := 0
+	if tm.currentKeyset == widget.KeysetNano {
+		initialSel = 1
+	}
+	tm.selectedKeymap = initialSel
+
+	tm.activeModal = NewModal("Keymaps", "Select Editor Keymap:", vimBtn, nanoBtn)
+	tm.activeModal.SetSelectedButton(initialSel)
+	tm.activeModal.OnDismiss(func() {
+		tm.Deactivate(ctx)
+	})
+
 	if ctx != nil {
 		ctx.RequestLayout()
 		ctx.MarkDirty()
 	}
 }
 
+func (tm *TopMenu) commitKeymap(ks widget.Keyset, ctx *tui.Context) {
+	if ctx == nil && tm.bar != nil {
+		ctx = tm.bar.ctx
+	}
+	tm.currentKeyset = ks
+	if tm.cb.OnSetKeyset != nil {
+		tm.cb.OnSetKeyset(ks)
+	}
+	if tm.cb.OnStatusMessage != nil {
+		if ks == widget.KeysetNano {
+			tm.cb.OnStatusMessage("switched keymap to Nano (modeless)")
+		} else {
+			tm.cb.OnStatusMessage("switched keymap to Vim (modal)")
+		}
+	}
+	tm.Deactivate(ctx)
+}
+
 func (tm *TopMenu) openNotImplemented(msg string, ctx *tui.Context) {
+	if ctx == nil && tm.bar != nil {
+		ctx = tm.bar.ctx
+	}
 	tm.modal = modalNotImplemented
 	tm.modalMsg = msg
+
+	okBtn := NewButton("OK", func() {
+		tm.Deactivate(ctx)
+	})
+
+	fullMsg := msg + " is not implemented"
+	tm.activeModal = NewModal("Not Implemented", fullMsg, okBtn)
+	tm.activeModal.OnDismiss(func() {
+		tm.Deactivate(ctx)
+	})
+
 	if ctx != nil {
 		ctx.RequestLayout()
 		ctx.MarkDirty()
@@ -425,6 +480,23 @@ func (mb *MenuBar) Layout(c tui.Constraints) tui.Size {
 	return c.Constrain(tui.Size{W: c.MaxW, H: 1})
 }
 
+// MenuStyle returns the active or fallback style configuration for the menu.
+func (mb *MenuBar) MenuStyle() *MenuStyle {
+	return mb.menu.MenuStyle()
+}
+
+// SetStyle configures a custom MenuStyle for the menu bar and overlay.
+func (mb *MenuBar) SetStyle(s *MenuStyle) *MenuBar {
+	mb.menu.SetStyle(s)
+	return mb
+}
+
+// SetStyles configures individual styling attributes for the menu bar and overlay.
+func (mb *MenuBar) SetStyles(bar, accent, highlight, highlightAccent, border style.Style) *MenuBar {
+	mb.menu.SetStyles(bar, accent, highlight, highlightAccent, border)
+	return mb
+}
+
 // Render paints the menu bar.
 func (mb *MenuBar) Render(s tui.Surface) {
 	sz := s.Size()
@@ -442,7 +514,7 @@ func (mb *MenuBar) Render(s tui.Surface) {
 // renderHorizontal paints the classic horizontal Borland menu bar.
 func (mb *MenuBar) renderHorizontal(s tui.Surface, sz tui.Size) {
 	// 1. Fill entire bar background with light gray.
-	s.Fill(tui.Rect{X: 0, Y: 0, W: sz.W, H: 1}, " ", menuBarStyle)
+	s.Fill(tui.Rect{X: 0, Y: 0, W: sz.W, H: 1}, " ", mb.menu.style.Bar())
 
 	// 2. Render Left menus: File, Option
 	x := 1
@@ -470,12 +542,8 @@ func (mb *MenuBar) renderHorizontal(s tui.Surface, sz tui.Size) {
 // renderCategoryItemHorizontal draws a single category with hotkey accent on horizontal bar.
 func (mb *MenuBar) renderCategoryItemHorizontal(s tui.Surface, x int, cat MenuCategory, isSel bool) int {
 	label := " " + cat.Name + " "
-	st := menuBarStyle
-	accSt := menuAccentStyle
-	if isSel {
-		st = menuHighlightStyle
-		accSt = menuHighlightAccentStyle
-	}
+	st := mb.menu.style.ItemStyle(isSel)
+	accSt := mb.menu.style.AccentStyle(isSel)
 
 	s.Fill(tui.Rect{X: x, Y: 0, W: len(label), H: 1}, " ", st)
 
@@ -500,10 +568,10 @@ func (mb *MenuBar) renderCategoryItemHorizontal(s tui.Surface, x int, cat MenuCa
 // renderVertical paints an autodb explorer-style vertical sidemenu.
 func (mb *MenuBar) renderVertical(s tui.Surface, sz tui.Size) {
 	// Fill background
-	s.Fill(tui.Rect{X: 0, Y: 0, W: sz.W, H: sz.H}, " ", menuBarStyle)
+	s.Fill(tui.Rect{X: 0, Y: 0, W: sz.W, H: sz.H}, " ", mb.menu.style.Bar())
 
 	// Render frame header
-	renderBoxFrame(s, tui.Rect{X: 0, Y: 0, W: sz.W, H: sz.H}, "Menu", dropdownBorder)
+	renderBoxFrame(s, tui.Rect{X: 0, Y: 0, W: sz.W, H: sz.H}, "Menu", mb.menu.style.Border())
 
 	for i, cat := range mb.menu.categories {
 		y := 2 + i
@@ -511,12 +579,8 @@ func (mb *MenuBar) renderVertical(s tui.Surface, sz tui.Size) {
 			break
 		}
 		isSel := mb.menu.active && mb.menu.selectedCategory == i
-		st := menuBarStyle
-		accSt := menuAccentStyle
-		if isSel {
-			st = menuHighlightStyle
-			accSt = menuHighlightAccentStyle
-		}
+		st := mb.menu.style.ItemStyle(isSel)
+		accSt := mb.menu.style.AccentStyle(isSel)
 
 		s.Fill(tui.Rect{X: 1, Y: y, W: sz.W - 2, H: 1}, " ", st)
 
@@ -562,7 +626,7 @@ func (mb *MenuBar) HandleEvent(ev tui.Event) bool {
 	}
 
 	// When a modal is open, delegate event to modal handler
-	if mb.menu.modal != modalNone {
+	if mb.menu.modal != modalNone || mb.menu.activeModal != nil {
 		return mb.handleModalKey(ke, ctx)
 	}
 
@@ -773,15 +837,21 @@ func (mb *MenuBar) commitSubmenu(ctx *tui.Context) {
 	item := cat.Items[mb.menu.selectedItem]
 	if mb.menu.selectedSubItem >= 0 && mb.menu.selectedSubItem < len(item.Submenu) {
 		subItem := item.Submenu[mb.menu.selectedSubItem]
-		mb.menu.currentKeyset = subItem.Keyset
-		if mb.menu.cb.OnSetKeyset != nil {
-			mb.menu.cb.OnSetKeyset(subItem.Keyset)
+		if subItem.Keyset != 0 {
+			mb.menu.currentKeyset = subItem.Keyset
 		}
-		if mb.menu.cb.OnStatusMessage != nil {
-			if subItem.Keyset == widget.KeysetNano {
-				mb.menu.cb.OnStatusMessage("switched keymap to Nano (modeless)")
-			} else {
-				mb.menu.cb.OnStatusMessage("switched keymap to Vim (modal)")
+		if subItem.Action() != nil {
+			subItem.Trigger()
+		} else {
+			if mb.menu.cb.OnSetKeyset != nil && subItem.Keyset != 0 {
+				mb.menu.cb.OnSetKeyset(subItem.Keyset)
+			}
+			if mb.menu.cb.OnStatusMessage != nil {
+				if subItem.Keyset == widget.KeysetNano {
+					mb.menu.cb.OnStatusMessage("switched keymap to Nano (modeless)")
+				} else {
+					mb.menu.cb.OnStatusMessage("switched keymap to Vim (modal)")
+				}
 			}
 		}
 	}
@@ -789,6 +859,21 @@ func (mb *MenuBar) commitSubmenu(ctx *tui.Context) {
 }
 
 func (mb *MenuBar) handleModalKey(ke tui.KeyEvent, ctx *tui.Context) bool {
+	if mb.menu.activeModal != nil {
+		handled := mb.menu.activeModal.HandleEvent(ke)
+		if mb.menu.activeModal != nil {
+			if mb.menu.modal == modalExit {
+				mb.menu.exitChoice = mb.menu.activeModal.SelectedButton()
+			} else if mb.menu.modal == modalKeymaps {
+				mb.menu.selectedKeymap = mb.menu.activeModal.SelectedButton()
+			}
+		}
+		if handled {
+			mb.markDirty()
+			return true
+		}
+	}
+
 	switch mb.menu.modal {
 	case modalExit:
 		switch ke.Code {
@@ -886,7 +971,7 @@ func (mo *MenuOverlay) Init(ctx *tui.Context) {
 
 // Layout sizes the overlay layer to match container bounds when active.
 func (mo *MenuOverlay) Layout(c tui.Constraints) tui.Size {
-	if !mo.menu.dropdownOpen && mo.menu.modal == modalNone {
+	if !mo.menu.dropdownOpen && mo.menu.modal == modalNone && mo.menu.activeModal == nil {
 		return tui.Size{}
 	}
 	return c.Constrain(tui.Size{W: c.MaxW, H: c.MaxH})
@@ -899,7 +984,7 @@ func (mo *MenuOverlay) Render(s tui.Surface) {
 		return
 	}
 
-	if mo.menu.modal != modalNone {
+	if mo.menu.modal != modalNone || mo.menu.activeModal != nil {
 		mo.renderModal(s, sz)
 		return
 	}
@@ -963,36 +1048,15 @@ func (mo *MenuOverlay) renderDropdownAndSubmenu(s tui.Surface, sz tui.Size) {
 
 	// 1. Render framed dropdown box
 	boxRect := tui.Rect{X: x, Y: y, W: boxW, H: boxH}
-	renderBoxFrame(s, boxRect, cat.Name, dropdownBorder)
+	renderBoxFrame(s, boxRect, cat.Name, mo.menu.style.Border())
 
 	// 2. Render items inside dropdown
 	for i, it := range cat.Items {
 		itemY := y + 1 + i
 		isSel := i == mo.menu.selectedItem
-		itemSt := menuBarStyle
-		accSt := menuAccentStyle
-		if isSel {
-			itemSt = menuHighlightStyle
-			accSt = menuHighlightAccentStyle
-		}
-
-		s.Fill(tui.Rect{X: x + 1, Y: itemY, W: boxW - 2, H: 1}, " ", itemSt)
-
-		// Render text with hotkey accent
-		runes := []rune(it.Name)
-		for j, r := range runes {
-			cellSt := itemSt
-			if j == it.HotkeyIdx {
-				cellSt = accSt
-			}
-			s.SetCell(x+2+j, itemY, string(r), cellSt)
-		}
-
-		// Submenu indicator arrow ►
-		if len(it.Submenu) > 0 {
-			arrowX := x + boxW - 3
-			s.SetCell(arrowX, itemY, "►", itemSt)
-		}
+		it.SetSelected(isSel)
+		it.SetStyle(mo.menu.style)
+		it.RenderAt(s, x+1, itemY, boxW-2)
 	}
 
 	// 3. Render Cascading Submenu on the right if open
@@ -1005,7 +1069,7 @@ func (mo *MenuOverlay) renderDropdownAndSubmenu(s tui.Surface, sz tui.Size) {
 }
 
 // renderCascadingSubmenu renders the cascading submenu card next to the parent dropdown.
-func (mo *MenuOverlay) renderCascadingSubmenu(s tui.Surface, sz tui.Size, parentX, parentY, parentW int, item MenuItem) {
+func (mo *MenuOverlay) renderCascadingSubmenu(s tui.Surface, sz tui.Size, parentX, parentY, parentW int, item *MenuItem) {
 	subW := 24
 	subH := len(item.Submenu) + 2
 
@@ -1028,41 +1092,25 @@ func (mo *MenuOverlay) renderCascadingSubmenu(s tui.Surface, sz tui.Size, parent
 	}
 
 	subRect := tui.Rect{X: subX, Y: subY, W: subW, H: subH}
-	renderBoxFrame(s, subRect, item.Name, dropdownBorder)
+	renderBoxFrame(s, subRect, item.Name, mo.menu.style.Border())
 
 	for i, subIt := range item.Submenu {
 		rowY := subY + 1 + i
 		isSel := i == mo.menu.selectedSubItem
-		itemSt := menuBarStyle
-		accSt := menuAccentStyle
-		if isSel {
-			itemSt = menuHighlightStyle
-			accSt = menuHighlightAccentStyle
-		}
-
-		s.Fill(tui.Rect{X: subX + 1, Y: rowY, W: subW - 2, H: 1}, " ", itemSt)
-
-		// Bullet indicator: • if this is the active keyset, else space
-		bullet := "  "
-		if mo.menu.currentKeyset == subIt.Keyset {
-			bullet = "• "
-		}
-		drawText(s, subX+2, rowY, bullet, itemSt)
-
-		// Hotkey and text
-		runes := []rune(subIt.Name)
-		for j, r := range runes {
-			cellSt := itemSt
-			if j == subIt.HotkeyIdx {
-				cellSt = accSt
-			}
-			s.SetCell(subX+4+j, rowY, string(r), cellSt)
-		}
+		subIt.SetSelected(isSel)
+		subIt.SetChecked(mo.menu.currentKeyset == subIt.Keyset)
+		subIt.SetStyle(mo.menu.style)
+		subIt.RenderAt(s, subX+1, rowY, subW-2)
 	}
 }
 
 // renderModal paints centered modals with a dimmed scrim background.
 func (mo *MenuOverlay) renderModal(s tui.Surface, sz tui.Size) {
+	if mo.menu.activeModal != nil {
+		mo.menu.activeModal.Render(s)
+		return
+	}
+
 	// 1. Scrim the background
 	s.Fill(tui.Rect{X: 0, Y: 0, W: sz.W, H: sz.H}, "░", scrimStyle)
 
