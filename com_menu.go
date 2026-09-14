@@ -1,7 +1,6 @@
 package editor
 
 import (
-	"strings"
 	"unicode"
 
 	"github.com/yongjohnlee80/golib/tui"
