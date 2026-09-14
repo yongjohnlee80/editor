@@ -146,9 +146,10 @@ App (root tui.Component)
      │       └─ status (*widget.StatusBar)         [NORMAL  file.txt  14:22:00]
      │
      └─ Layer 1: menu.overlay (*MenuOverlay)
-         ├─ Dropdown Card (painted via renderBoxFrame)
-         ├─ Cascading Submenu Card (painted via renderBoxFrame)   (e.g. Keymaps -> 1. Vim, 2. Nano)
-         └─ Modals (painted via renderBoxFrame)                   (Exit confirmation, Not Implemented)
+         ├─ Dropdown Card (renders active MenuCategory items)
+         ├─ Cascading Submenu Cards (recursive submenuStack navigation of arbitrary depth)
+         └─ activeModal (*Modal - implements tui.FocusScope, mounted under OverlayHost)
+             └─ child buttons (*Button - implements tui.Focusable, mounted via Context.Mount)
 ```
 
 ### Component Roles
@@ -160,8 +161,12 @@ App (root tui.Component)
 3. **`footer *footer`**:
    A dedicated 3-section status line pinned at the bottom: mode indicator on the left, file path or transient feedback message in the center, and wall clock on the right. Does not handle command input.
 4. **`menu *TopMenu`**:
-   The menu subsystem comprising `MenuBar` (mounted on `dock` at Top, Bottom, Left, or Right) and `MenuOverlay` (mounted on `OverlayHost` layer 1). Coordinates dropdown popups, cascading submenus, Alt accelerators (`Alt+f`, `Alt+o`, `Alt+h`), mnemonic accelerators, runtime keyset transitions, and modal dialogs.
-5. **`host *widget.OverlayHost`**:
+   The menu subsystem comprising `MenuBar` (mounted on `dock` at Top, Bottom, Left, or Right) and `MenuOverlay` (mounted on `OverlayHost` layer 1). Coordinates dropdown popups, arbitrary-depth cascading submenus, Alt accelerators (`Alt+f`, `Alt+o`, `Alt+h`), mnemonic accelerators, runtime keyset transitions, and active modal dialogs.
+5. **`Button` & `Modal` (Standalone Primitives - ADR 0098)**:
+   Decoupled, upstream-portable GUI primitives:
+   - **`Button`**: Implements `tui.Focusable`, listens for runtime `FocusEvent` transitions, supports disabled state (`AcceptsFocus() == false`), semantic roles (`ButtonRoleNormal`, `ButtonRoleDefault`, `ButtonRoleCancel`), and explicit `Mnemonic rune` declarations. Text width is measured via policy-aware cell measurement (`Context.StringWidth` / `tui.StringWidth`).
+   - **`Modal`**: Implements `tui.FocusScope` (`TrapsFocus() == true`) to confine keyboard navigation during dialog interactions and restore prior focus upon unmount. Mounts all child buttons via `ctx.Mount(b)` into distinct `NodeID` identities, enforces pure rendering, and applies `ModalStyle.Title` to framed box headers.
+6. **`host *widget.OverlayHost`**:
    Wraps the dock layout as layer 0 and hosts overlay cards (menu dropdowns, cascading submenus, and modals) on layer 1.
 
 ### Deep Dive: What `OverlayHost` Does

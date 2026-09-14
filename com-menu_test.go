@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/yongjohnlee80/golib/tui"
@@ -171,11 +172,14 @@ func TestMenuBar_ModalExit_Flow(t *testing.T) {
 	}
 	// Press Enter on Exit
 	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
-	if tm.modal != modalExit {
-		t.Fatalf("modal = %v, want modalExit", tm.modal)
+	if !tm.ModalActive() || tm.ActiveModal() == nil {
+		t.Fatal("modal should be active")
 	}
-	if tm.exitChoice != 0 {
-		t.Errorf("exitChoice = %d, want 0 (Yes)", tm.exitChoice)
+	if tm.ActiveModal().Title() != "Exit Confirmation" {
+		t.Errorf("modal Title = %q, want Exit Confirmation", tm.ActiveModal().Title())
+	}
+	if tm.ActiveModal().SelectedButton() != 0 {
+		t.Errorf("selected button = %d, want 0 (Yes)", tm.ActiveModal().SelectedButton())
 	}
 
 	// Confirm with Enter
@@ -188,8 +192,8 @@ func TestMenuBar_ModalExit_Flow(t *testing.T) {
 	quitCalled = false
 	tm.openExitModal(nil)
 	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEscape})
-	if tm.modal != modalNone {
-		t.Errorf("modal = %v, want modalNone after Escape", tm.modal)
+	if tm.ModalActive() {
+		t.Errorf("modal must be inactive after Escape")
 	}
 	if quitCalled {
 		t.Error("canceling Exit modal must not call OnQuit")
@@ -198,15 +202,15 @@ func TestMenuBar_ModalExit_Flow(t *testing.T) {
 	// 3. Test Exit toggled to No and confirmed
 	tm.openExitModal(nil)
 	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyRight}) // toggle to No
-	if tm.exitChoice != 1 {
-		t.Errorf("exitChoice = %d, want 1 (No)", tm.exitChoice)
+	if tm.ActiveModal().SelectedButton() != 1 {
+		t.Errorf("selected button = %d, want 1 (No)", tm.ActiveModal().SelectedButton())
 	}
 	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
 	if quitCalled {
 		t.Error("selecting No must not call OnQuit")
 	}
-	if tm.modal != modalNone {
-		t.Errorf("modal = %v, want modalNone", tm.modal)
+	if tm.ModalActive() {
+		t.Errorf("modal must be inactive after No")
 	}
 }
 
@@ -259,6 +263,73 @@ func TestMenuBar_CascadingSubmenuKeymaps_Flow(t *testing.T) {
 	}
 }
 
+func TestMenuBar_ArbitrarySubmenuDepth(t *testing.T) {
+	var deepTriggered bool
+	deepItem := NewMenuItem("Level 3 Action", 'a', 8, func() {
+		deepTriggered = true
+	})
+	level2 := NewMenuItemWithSubmenu("Level 2", '2', 6, deepItem)
+	level1 := NewMenuItemWithSubmenu("Level 1", '1', 6, level2)
+
+	tm := newTopMenu(TopMenuCallbacks{})
+	tm.categories = append(tm.categories, MenuCategory{
+		Name:      "Deep",
+		Hotkey:    'd',
+		HotkeyIdx: 0,
+		Items:     []*MenuItem{level1},
+	})
+	mb := tm.Bar()
+
+	// Open Deep menu (cat 3)
+	tm.OpenCategory(3, nil)
+	if !tm.DropdownOpen() {
+		t.Fatal("dropdown should be open")
+	}
+
+	// Open level 1 submenu
+	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyRight})
+	if len(tm.submenuStack) != 1 {
+		t.Fatalf("submenuStack depth = %d, want 1", len(tm.submenuStack))
+	}
+
+	// Open level 2 submenu
+	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyRight})
+	if len(tm.submenuStack) != 2 {
+		t.Fatalf("submenuStack depth = %d, want 2", len(tm.submenuStack))
+	}
+
+	// Trigger Level 3 Action
+	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
+	if !deepTriggered {
+		t.Fatal("deep item action was not triggered")
+	}
+	if tm.Active() {
+		t.Fatal("menu should deactivate after action trigger")
+	}
+}
+
+func TestMenuBar_DynamicCategoriesRendering(t *testing.T) {
+	tm := newTopMenu(TopMenuCallbacks{})
+	// Add 4th category
+	tm.categories = append(tm.categories, MenuCategory{
+		Name:      "Tools",
+		Hotkey:    't',
+		HotkeyIdx: 0,
+		Items: []*MenuItem{
+			NewMenuItem("Linter", 'l', 0, nil),
+		},
+	})
+
+	surf := newMockSurface(80, 1)
+	tm.Bar().Render(surf)
+	screen := surf.String()
+
+	if !strings.Contains(screen, "File") || !strings.Contains(screen, "Option") ||
+		!strings.Contains(screen, "Help") || !strings.Contains(screen, "Tools") {
+		t.Fatalf("menu bar did not render all categories including 4th category; screen:\n%s", screen)
+	}
+}
+
 func TestMenuBar_MnemonicHotkeys(t *testing.T) {
 	tm := newTopMenu(TopMenuCallbacks{})
 	mb := tm.Bar()
@@ -283,8 +354,8 @@ func TestMenuBar_MnemonicHotkeys(t *testing.T) {
 
 	// Press 'x' -> triggers Exit modal
 	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: 'x'})
-	if tm.modal != modalExit {
-		t.Errorf("hotkey 'x' should open Exit modal, got %v", tm.modal)
+	if !tm.ModalActive() || tm.ActiveModal() == nil {
+		t.Fatal("hotkey 'x' should open Exit modal")
 	}
 }
 
@@ -322,17 +393,17 @@ func TestMenuBar_ModalNotImplemented_Flow(t *testing.T) {
 	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyDown}) // New is item 0
 	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
 
-	if tm.modal != modalNotImplemented {
-		t.Fatalf("modal = %v, want modalNotImplemented", tm.modal)
+	if !tm.ModalActive() || tm.ActiveModal() == nil {
+		t.Fatal("modal should be active for New")
 	}
-	if tm.modalMsg != "File -> New" {
-		t.Errorf("modalMsg = %q, want File -> New", tm.modalMsg)
+	if tm.ActiveModal().Title() != "Not Implemented" {
+		t.Errorf("modal Title = %q, want Not Implemented", tm.ActiveModal().Title())
 	}
 
 	// Dismiss with Enter
 	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
-	if tm.modal != modalNone {
-		t.Errorf("modal = %v, want modalNone after dismiss", tm.modal)
+	if tm.ModalActive() {
+		t.Errorf("modal should be inactive after dismiss")
 	}
 
 	// Help -> About
@@ -341,17 +412,14 @@ func TestMenuBar_ModalNotImplemented_Flow(t *testing.T) {
 	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyDown})
 	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
 
-	if tm.modal != modalNotImplemented {
-		t.Fatalf("modal = %v, want modalNotImplemented for About", tm.modal)
-	}
-	if tm.modalMsg != "Help -> About" {
-		t.Errorf("modalMsg = %q, want Help -> About", tm.modalMsg)
+	if !tm.ModalActive() || tm.ActiveModal() == nil {
+		t.Fatal("modal should be active for About")
 	}
 
 	// Dismiss with Escape
 	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEscape})
-	if tm.modal != modalNone {
-		t.Errorf("modal = %v, want modalNone after Escape", tm.modal)
+	if tm.ModalActive() {
+		t.Errorf("modal should be inactive after Escape")
 	}
 }
 
@@ -374,7 +442,7 @@ func TestMenuOverlay_Layout(t *testing.T) {
 
 	// When modal is active, layout spans full area
 	tm.dropdownOpen = false
-	tm.modal = modalExit
+	tm.openExitModal(nil)
 	sz = mo.Layout(tui.Constraints{MinW: 0, MaxW: 80, MinH: 0, MaxH: 24})
 	if sz.W != 80 || sz.H != 24 {
 		t.Errorf("modal overlay sz = %+v, want (80, 24)", sz)
@@ -382,7 +450,6 @@ func TestMenuOverlay_Layout(t *testing.T) {
 }
 
 func TestMenuStyle_Standalone(t *testing.T) {
-	// Nil receiver tests fallback to defaultMenuStyle
 	var nilStyle *MenuStyle
 	if nilStyle.Bar() != defaultMenuStyle.bar {
 		t.Fatal("nilStyle.Bar() did not return defaultMenuStyle.bar")
@@ -412,7 +479,6 @@ func TestMenuStyle_Standalone(t *testing.T) {
 		t.Fatal("nilStyle.AccentStyle(true) did not return defaultMenuStyle.highlightAccent")
 	}
 
-	// Custom MenuStyle
 	bar := style.New().Foreground(style.ANSI(1))
 	acc := style.New().Foreground(style.ANSI(2))
 	hl := style.New().Foreground(style.ANSI(3))
@@ -447,8 +513,7 @@ func TestMenuStyle_Standalone(t *testing.T) {
 		t.Fatal("tm.Bar().MenuStyle() did not return custom style after SetStyle")
 	}
 
-	// Test SetStyles convenience helper on MenuBar
-	tm.Bar().SetStyles(bar, acc, hl, hlAcc, border)
+	tm.Bar().SetStyles(bar, accent, highlight, highlightAccent, border)
 	if tm.MenuStyle().Bar() != bar {
 		t.Fatal("Bar().SetStyles did not apply custom bar style")
 	}

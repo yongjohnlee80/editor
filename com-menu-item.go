@@ -2,6 +2,7 @@ package editor
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/yongjohnlee80/golib/tui"
 	"github.com/yongjohnlee80/golib/tui/widget"
@@ -18,16 +19,16 @@ type MenuItemStatus struct {
 	Checkable bool
 }
 
-// MenuItem is a standalone menu item widget component, similar to Button.
-// It encapsulates the display name, hotkey accelerator, semantic action callback,
+// MenuItem is a standalone menu item widget component.
+// It encapsulates display label, hotkey accelerator, semantic action callback,
 // state/status flags (selected, disabled, checked), and optional submenu children.
+// It is completely decoupled from application domain types or keysets.
 type MenuItem struct {
 	widget.Base
 
 	Name      string
 	Hotkey    rune
 	HotkeyIdx int
-	Keyset    widget.Keyset
 
 	action func()
 
@@ -37,7 +38,7 @@ type MenuItem struct {
 	checked   bool
 	checkable bool
 
-	Submenu []*MenuItem
+	submenu []*MenuItem
 
 	style *MenuStyle
 }
@@ -53,33 +54,41 @@ func NewMenuItem(name string, hotkey rune, hotkeyIdx int, action func()) *MenuIt
 	}
 }
 
-// NewMenuItemWithSubmenu constructs a MenuItem that cascades into a nested submenu.
+// NewMenuItemWithSubmenu constructs a MenuItem that cascades into nested child submenu items.
 func NewMenuItemWithSubmenu(name string, hotkey rune, hotkeyIdx int, submenu ...*MenuItem) *MenuItem {
+	var filtered []*MenuItem
+	for _, sub := range submenu {
+		if sub != nil {
+			filtered = append(filtered, sub)
+		}
+	}
 	return &MenuItem{
 		Name:      name,
 		Hotkey:    hotkey,
 		HotkeyIdx: hotkeyIdx,
-		Submenu:   submenu,
+		submenu:   filtered,
 	}
 }
 
-// NewMenuItemWithKeyset constructs a checkable MenuItem bound to an editor Keyset option.
-func NewMenuItemWithKeyset(name string, hotkey rune, hotkeyIdx int, ks widget.Keyset, action func()) *MenuItem {
+// NewCheckableMenuItem constructs a checkable MenuItem with initial checked state and action.
+func NewCheckableMenuItem(name string, hotkey rune, hotkeyIdx int, checked bool, action func()) *MenuItem {
 	return &MenuItem{
 		Name:      name,
 		Hotkey:    hotkey,
 		HotkeyIdx: hotkeyIdx,
-		Keyset:    ks,
 		action:    action,
 		checkable: true,
+		checked:   checked,
 	}
 }
 
-// Init mounts the menu item into the TUI context and initializes child submenu items.
+// Init mounts the menu item into the TUI context and framework-mounts child submenu items.
 func (mi *MenuItem) Init(ctx *tui.Context) {
 	mi.Base.Init(ctx)
-	for _, sub := range mi.Submenu {
-		sub.Init(ctx)
+	for _, sub := range mi.submenu {
+		if sub != nil {
+			ctx.Mount(sub)
+		}
 	}
 }
 
@@ -123,10 +132,11 @@ func (mi *MenuItem) Disabled() bool {
 	return mi.disabled
 }
 
-// SetDisabled updates the disabled state of the menu item.
+// SetDisabled updates the disabled state of the menu item and invalidates layout.
 func (mi *MenuItem) SetDisabled(dis bool) *MenuItem {
 	if mi.disabled != dis {
 		mi.disabled = dis
+		mi.RequestLayout()
 		mi.MarkDirty()
 	}
 	return mi
@@ -151,10 +161,11 @@ func (mi *MenuItem) Checkable() bool {
 	return mi.checkable
 }
 
-// SetCheckable sets whether the menu item displays a check/bullet indicator.
+// SetCheckable sets whether the menu item displays a check/bullet indicator and invalidates layout.
 func (mi *MenuItem) SetCheckable(chk bool) *MenuItem {
 	if mi.checkable != chk {
 		mi.checkable = chk
+		mi.RequestLayout()
 		mi.MarkDirty()
 	}
 	return mi
@@ -176,18 +187,43 @@ func (mi *MenuItem) SetStatus(st MenuItemStatus) *MenuItem {
 	mi.disabled = st.Disabled
 	mi.checked = st.Checked
 	mi.checkable = st.Checkable
+	mi.RequestLayout()
 	mi.MarkDirty()
 	return mi
 }
 
 // HasSubmenu reports whether the menu item cascades into child submenu items.
 func (mi *MenuItem) HasSubmenu() bool {
-	return len(mi.Submenu) > 0
+	return len(mi.submenu) > 0
 }
 
-// SetSubmenu configures child cascading submenu items for this item.
+// Submenu returns a defensive copy of the child submenu items.
+func (mi *MenuItem) Submenu() []*MenuItem {
+	out := make([]*MenuItem, len(mi.submenu))
+	copy(out, mi.submenu)
+	return out
+}
+
+// SetSubmenu configures child cascading submenu items, dynamically mounting them if already initialized.
 func (mi *MenuItem) SetSubmenu(submenu ...*MenuItem) *MenuItem {
-	mi.Submenu = submenu
+	var filtered []*MenuItem
+	for _, sub := range submenu {
+		if sub != nil {
+			filtered = append(filtered, sub)
+		}
+	}
+
+	if ctx := mi.Context(); ctx != nil {
+		for _, old := range mi.submenu {
+			ctx.Unmount(old)
+		}
+		for _, sub := range filtered {
+			ctx.Mount(sub)
+		}
+	}
+
+	mi.submenu = filtered
+	mi.RequestLayout()
 	mi.MarkDirty()
 	return mi
 }
@@ -207,13 +243,20 @@ func (mi *MenuItem) SetStyle(s *MenuStyle) *MenuItem {
 	return mi
 }
 
-// Width returns the display width needed for this menu item.
+func (mi *MenuItem) measure(s string) int {
+	if ctx := mi.Context(); ctx != nil {
+		return ctx.StringWidth(s)
+	}
+	return tui.StringWidth(s)
+}
+
+// Width returns the display width needed for this menu item using policy-aware measurement.
 func (mi *MenuItem) Width() int {
-	w := len(mi.Name) + 4
+	w := mi.measure(mi.Name) + 4
 	if mi.checkable {
 		w += 2
 	}
-	if len(mi.Submenu) > 0 {
+	if len(mi.submenu) > 0 {
 		w += 2
 	}
 	return w
@@ -241,8 +284,8 @@ func (mi *MenuItem) Render(s tui.Surface) {
 
 // RenderAt paints the menu item row on the surface at coordinates (x, y) with the given width.
 func (mi *MenuItem) RenderAt(s tui.Surface, x, y, width int) {
-	st := mi.style.ItemStyle(mi.selected)
-	accSt := mi.style.AccentStyle(mi.selected)
+	st := mi.MenuStyle().ItemStyle(mi.selected)
+	accSt := mi.MenuStyle().AccentStyle(mi.selected)
 
 	if mi.disabled {
 		st = st.Faint(true)
@@ -263,18 +306,25 @@ func (mi *MenuItem) RenderAt(s tui.Surface, x, y, width int) {
 		textStartX = x + 3
 	}
 
-	// 3. Render name with hotkey accent
-	runes := []rune(mi.Name)
-	for j, r := range runes {
+	// 3. Render name with hotkey accent, honoring grapheme display cells
+	col := textStartX
+	runeIdx := 0
+	for g := range tui.Graphemes(mi.Name) {
+		gw := s.StringWidth(g)
+		if col+gw > x+width-1 {
+			break
+		}
 		cellSt := st
-		if j == mi.HotkeyIdx {
+		if runeIdx == mi.HotkeyIdx {
 			cellSt = accSt
 		}
-		s.SetCell(textStartX+j, y, string(r), cellSt)
+		s.SetCell(col, y, g, cellSt)
+		col += gw
+		runeIdx++
 	}
 
 	// 4. Render submenu arrow indicator ► if it has children
-	if len(mi.Submenu) > 0 {
+	if len(mi.submenu) > 0 && x+width-2 >= x {
 		arrowX := x + width - 2
 		s.SetCell(arrowX, y, "►", st)
 	}
@@ -298,9 +348,7 @@ func (mi *MenuItem) HandleEvent(ev tui.Event) bool {
 	}
 
 	// Match hotkey mnemonic
-	codeLower := strings.ToLower(string(ke.Code))
-	hotkeyLower := strings.ToLower(string(mi.Hotkey))
-	if len(codeLower) > 0 && len(hotkeyLower) > 0 && codeLower == hotkeyLower {
+	if mi.Hotkey != 0 && unicode.ToLower(rune(ke.Code)) == unicode.ToLower(mi.Hotkey) {
 		mi.Trigger()
 		return true
 	}

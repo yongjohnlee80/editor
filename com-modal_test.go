@@ -1,8 +1,10 @@
 package editor
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yongjohnlee80/golib/tui"
 	"github.com/yongjohnlee80/golib/tui/style"
@@ -10,8 +12,8 @@ import (
 
 func TestModal_StandaloneWidget(t *testing.T) {
 	var yesClicked, noClicked, dismissed bool
-	yesBtn := NewButton("Yes", func() { yesClicked = true })
-	noBtn := NewButton("No", func() { noClicked = true })
+	yesBtn := NewButton("Yes", func() { yesClicked = true }).SetRole(ButtonRoleDefault).SetMnemonic('y')
+	noBtn := NewButton("No", func() { noClicked = true }).SetRole(ButtonRoleCancel).SetMnemonic('n')
 
 	modal := NewModal("Confirmation", "Are you sure?", yesBtn, noBtn)
 	modal.OnDismiss(func() { dismissed = true })
@@ -30,6 +32,9 @@ func TestModal_StandaloneWidget(t *testing.T) {
 	}
 	if !yesBtn.Focused() || noBtn.Focused() {
 		t.Fatal("button focus state not initialized properly")
+	}
+	if !modal.TrapsFocus() {
+		t.Fatal("Modal must implement FocusScope with TrapsFocus() == true")
 	}
 
 	// SetTitle and SetBody
@@ -78,10 +83,10 @@ func TestModal_StandaloneWidget(t *testing.T) {
 		t.Fatal("KeyEnter did not trigger focused Yes button")
 	}
 
-	// Hotkey 'n' triggers No button
+	// Mnemonic 'n' triggers No button
 	modal.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: 'n'})
 	if !noClicked {
-		t.Fatal("hotkey 'n' did not trigger No button")
+		t.Fatal("mnemonic 'n' did not trigger No button")
 	}
 
 	// KeyEscape triggers onDismiss
@@ -103,14 +108,21 @@ func TestModal_StandaloneWidget(t *testing.T) {
 		t.Fatal("SetSelectedButton(1) failed to focus button 1")
 	}
 
-	// SetButtons
+	// SetButtons defensive copy and nil filtering
 	okBtn := NewButton("OK", nil)
-	modal.SetButtons(okBtn)
+	modal.SetButtons(okBtn, nil)
 	if len(modal.Buttons()) != 1 || modal.Buttons()[0].Label() != "OK" {
-		t.Fatal("SetButtons failed")
+		t.Fatal("SetButtons failed or did not filter nils")
 	}
 	if !okBtn.Focused() {
 		t.Fatal("new button not focused after SetButtons")
+	}
+
+	// Mutating returned slice should not affect modal internals
+	retButtons := modal.Buttons()
+	retButtons[0] = nil
+	if modal.Buttons()[0] == nil {
+		t.Fatal("modal.Buttons() must return a defensive copy")
 	}
 
 	// AcceptsFocus and Layout
@@ -125,7 +137,7 @@ func TestModal_StandaloneWidget(t *testing.T) {
 	// SetStyles
 	modal.SetStyles(
 		style.New().Background(style.ANSI(0)),
-		style.New().Foreground(style.ANSI(7)),
+		style.New().Foreground(style.ANSI(14)),
 		style.New().Foreground(style.ANSI(7)),
 		style.New().Foreground(style.ANSI(8)),
 	)
@@ -143,19 +155,76 @@ func TestModal_StandaloneWidget(t *testing.T) {
 	if !strings.Contains(screen, "[ OK ]") {
 		t.Fatalf("rendered modal missing OK button; screen:\n%s", screen)
 	}
+}
 
-	// Multiline body rendering
-	multiModal := NewModal("Multi", "Line 1\nLine 2\nLine 3", okBtn)
-	multiSurf := newMockSurface(40, 12)
-	multiModal.Render(multiSurf)
-	multiScreen := multiSurf.String()
-	if !strings.Contains(multiScreen, "Line 1") || !strings.Contains(multiScreen, "Line 2") {
-		t.Fatalf("multiline modal missing lines; screen:\n%s", multiScreen)
+func TestModal_ChildMountingAndDistinctNodeIDs(t *testing.T) {
+	tb := tui.NewTestBackend(80, 24)
+	btn1 := NewButton("First", nil)
+	btn2 := NewButton("Second", nil)
+	modal := NewModal("Title", "Body", btn1, btn2)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	app := tui.NewApp(modal, tui.WithBackend(tb))
+	done := make(chan error, 1)
+	go func() { done <- app.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Error("App.Run did not return within 3s after cancel")
+		}
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	modalID := modal.NodeID()
+	btn1ID := btn1.NodeID()
+	btn2ID := btn2.NodeID()
+
+	if modalID == 0 || btn1ID == 0 || btn2ID == 0 {
+		t.Fatalf("expected non-zero NodeIDs for all mounted components: modal=%d, btn1=%d, btn2=%d", modalID, btn1ID, btn2ID)
+	}
+
+	if btn1ID == modalID || btn2ID == modalID {
+		t.Fatalf("child buttons must not reuse parent Modal NodeID %d; got btn1=%d, btn2=%d", modalID, btn1ID, btn2ID)
+	}
+
+	if btn1ID == btn2ID {
+		t.Fatalf("child buttons must each have distinct NodeIDs; got btn1=%d, btn2=%d", btn1ID, btn2ID)
+	}
+}
+
+func TestModal_TinySurfaceSafety(t *testing.T) {
+	btn := NewButton("OK", nil)
+	modal := NewModal("Very Long Title That Exceeds Viewport", "Very long body text that also exceeds viewport width and height", btn)
+
+	// Test tiny surface (10x3)
+	tinySurf := newMockSurface(10, 3)
+	// Must not panic or produce out-of-bounds coordinates
+	modal.Render(tinySurf)
+	s := tinySurf.String()
+	if len(s) == 0 {
+		t.Fatal("tiny surface rendering produced empty string")
+	}
+}
+
+func TestModal_UnicodeDisplayCells(t *testing.T) {
+	btn := NewButton("确定", nil)
+	modal := NewModal("确认退出", "你确定要退出吗？", btn)
+
+	surf := newMockSurface(40, 10)
+	modal.Render(surf)
+	screen := surf.String()
+	if !strings.Contains(screen, "确认退出") {
+		t.Fatalf("rendered modal missing CJK title; screen:\n%s", screen)
+	}
+	if !strings.Contains(screen, "你确定要退出吗？") {
+		t.Fatalf("rendered modal missing CJK body; screen:\n%s", screen)
 	}
 }
 
 func TestModalStyle_Standalone(t *testing.T) {
-	// Nil receiver tests fallback to defaultModalStyle
 	var nilStyle *ModalStyle
 	if nilStyle.Card() != defaultModalStyle.card {
 		t.Fatal("nilStyle.Card() did not return defaultModalStyle.card")
@@ -170,7 +239,6 @@ func TestModalStyle_Standalone(t *testing.T) {
 		t.Fatal("nilStyle.Scrim() did not return defaultModalStyle.scrim")
 	}
 
-	// Custom style
 	c := style.New().Foreground(style.ANSI(1))
 	ti := style.New().Foreground(style.ANSI(2))
 	b := style.New().Foreground(style.ANSI(3))

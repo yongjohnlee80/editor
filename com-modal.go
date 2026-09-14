@@ -2,6 +2,7 @@ package editor
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/yongjohnlee80/golib/tui"
 	"github.com/yongjohnlee80/golib/tui/style"
@@ -10,14 +11,14 @@ import (
 
 // Modal is a standalone dialog widget component. It takes a title, a text body,
 // and a slice of Button widgets, managing navigation across buttons and rendering
-// a centered framed card with scrim backdrop.
+// a centered framed card with scrim backdrop. It implements tui.FocusScope to trap
+// focus within the dialog during interaction.
 type Modal struct {
 	widget.Base
 
-	title   string
-	body    string
-	buttons []*Button
-
+	title     string
+	body      string
+	buttons   []*Button
 	selected  int
 	onDismiss func()
 
@@ -26,21 +27,35 @@ type Modal struct {
 
 // NewModal constructs a standalone Modal widget taking title, body text, and buttons.
 func NewModal(title, body string, buttons ...*Button) *Modal {
+	var filtered []*Button
+	for _, b := range buttons {
+		if b != nil {
+			filtered = append(filtered, b)
+		}
+	}
 	m := &Modal{
 		title:   title,
 		body:    body,
-		buttons: buttons,
+		buttons: filtered,
 	}
-	m.updateButtonFocus()
+	m.syncFocus()
 	return m
 }
 
-// Init mounts the modal into the TUI context and initializes its child buttons.
+// Init mounts the modal into the TUI context and framework-mounts its child buttons.
 func (m *Modal) Init(ctx *tui.Context) {
 	m.Base.Init(ctx)
 	for _, b := range m.buttons {
-		b.Init(ctx)
+		if b != nil {
+			ctx.Mount(b)
+		}
 	}
+	m.syncFocus()
+}
+
+// TrapsFocus implements tui.FocusScope. Keyboard tab navigation is confined to this dialog.
+func (m *Modal) TrapsFocus() bool {
+	return true
 }
 
 // Title returns the modal dialog's title.
@@ -48,10 +63,13 @@ func (m *Modal) Title() string {
 	return m.title
 }
 
-// SetTitle updates the modal dialog's title.
+// SetTitle updates the modal dialog's title and invalidates layout.
 func (m *Modal) SetTitle(title string) {
-	m.title = title
-	m.MarkDirty()
+	if m.title != title {
+		m.title = title
+		m.RequestLayout()
+		m.MarkDirty()
+	}
 }
 
 // Body returns the modal dialog's body text.
@@ -59,24 +77,46 @@ func (m *Modal) Body() string {
 	return m.body
 }
 
-// SetBody updates the modal dialog's body text.
+// SetBody updates the modal dialog's body text and invalidates layout.
 func (m *Modal) SetBody(body string) {
-	m.body = body
-	m.MarkDirty()
-}
-
-// Buttons returns the modal dialog's slice of buttons.
-func (m *Modal) Buttons() []*Button {
-	return m.buttons
-}
-
-// SetButtons replaces the modal dialog's buttons.
-func (m *Modal) SetButtons(buttons ...*Button) {
-	m.buttons = buttons
-	if m.selected >= len(m.buttons) {
-		m.selected = 0
+	if m.body != body {
+		m.body = body
+		m.RequestLayout()
+		m.MarkDirty()
 	}
-	m.updateButtonFocus()
+}
+
+// Buttons returns a defensive copy of the modal dialog's buttons.
+func (m *Modal) Buttons() []*Button {
+	out := make([]*Button, len(m.buttons))
+	copy(out, m.buttons)
+	return out
+}
+
+// SetButtons replaces the modal dialog's buttons, dynamically mounting new children.
+func (m *Modal) SetButtons(buttons ...*Button) {
+	var filtered []*Button
+	for _, b := range buttons {
+		if b != nil {
+			filtered = append(filtered, b)
+		}
+	}
+
+	if ctx := m.Context(); ctx != nil {
+		for _, old := range m.buttons {
+			ctx.Unmount(old)
+		}
+		for _, b := range filtered {
+			ctx.Mount(b)
+		}
+	}
+
+	m.buttons = filtered
+	if m.selected >= len(m.buttons) {
+		m.selected = max(0, len(m.buttons)-1)
+	}
+	m.syncFocus()
+	m.RequestLayout()
 	m.MarkDirty()
 }
 
@@ -88,30 +128,47 @@ func (m *Modal) SelectedButton() int {
 // SetSelectedButton sets the index of the currently focused button.
 func (m *Modal) SetSelectedButton(idx int) {
 	if idx >= 0 && idx < len(m.buttons) {
+		if m.buttons[idx].Disabled() {
+			return
+		}
 		m.selected = idx
-		m.updateButtonFocus()
+		m.syncFocus()
 		m.MarkDirty()
 	}
 }
 
-// SelectNext focuses the next button, wrapping around to the first.
+// SelectNext focuses the next enabled button, wrapping around.
 func (m *Modal) SelectNext() {
-	if len(m.buttons) == 0 {
+	n := len(m.buttons)
+	if n <= 1 {
 		return
 	}
-	m.selected = (m.selected + 1) % len(m.buttons)
-	m.updateButtonFocus()
-	m.MarkDirty()
+	for step := 1; step < n; step++ {
+		idx := (m.selected + step) % n
+		if !m.buttons[idx].Disabled() {
+			m.selected = idx
+			m.syncFocus()
+			m.MarkDirty()
+			return
+		}
+	}
 }
 
-// SelectPrev focuses the previous button, wrapping around to the last.
+// SelectPrev focuses the previous enabled button, wrapping around.
 func (m *Modal) SelectPrev() {
-	if len(m.buttons) == 0 {
+	n := len(m.buttons)
+	if n <= 1 {
 		return
 	}
-	m.selected = (m.selected - 1 + len(m.buttons)) % len(m.buttons)
-	m.updateButtonFocus()
-	m.MarkDirty()
+	for step := 1; step < n; step++ {
+		idx := (m.selected - step + n) % n
+		if !m.buttons[idx].Disabled() {
+			m.selected = idx
+			m.syncFocus()
+			m.MarkDirty()
+			return
+		}
+	}
 }
 
 // TriggerFocused triggers the currently focused button's action.
@@ -155,9 +212,13 @@ func (m *Modal) SetStyles(card, title, body, scrim style.Style) *Modal {
 	return m
 }
 
-func (m *Modal) updateButtonFocus() {
+func (m *Modal) syncFocus() {
 	for i, b := range m.buttons {
-		b.SetFocused(i == m.selected)
+		isSel := (i == m.selected)
+		b.SetFocused(isSel)
+		if isSel && b.Context() != nil {
+			b.Context().RequestFocus()
+		}
 	}
 }
 
@@ -171,26 +232,41 @@ func (m *Modal) Layout(c tui.Constraints) tui.Size {
 	return c.Constrain(tui.Size{W: c.MaxW, H: c.MaxH})
 }
 
-// Render paints the scrim background and centered modal dialog card.
+func (m *Modal) measure(s string) int {
+	if ctx := m.Context(); ctx != nil {
+		return ctx.StringWidth(s)
+	}
+	return tui.StringWidth(s)
+}
+
+// Render paints the scrim background and centered modal dialog card with pure rendering.
 func (m *Modal) Render(s tui.Surface) {
 	sz := s.Size()
 	if sz.W <= 0 || sz.H <= 0 {
 		return
 	}
 
+	st := m.ModalStyle()
+
 	// 1. Scrim background
-	s.Fill(tui.Rect{X: 0, Y: 0, W: sz.W, H: sz.H}, "░", m.style.Scrim())
+	s.Fill(tui.Rect{X: 0, Y: 0, W: sz.W, H: sz.H}, "░", st.Scrim())
 
-	// 2. Compute card geometry
+	// 2. Compute card geometry using surface string widths
 	cardW := 36
-	if len(m.title)+6 > cardW {
-		cardW = len(m.title) + 6
-	}
-	if len(m.body)+6 > cardW {
-		cardW = len(m.body) + 6
+	titleW := s.StringWidth(m.title) + 6
+	if titleW > cardW {
+		cardW = titleW
 	}
 
-	spacing := 5
+	lines := strings.Split(m.body, "\n")
+	for _, l := range lines {
+		lw := s.StringWidth(l) + 6
+		if lw > cardW {
+			cardW = lw
+		}
+	}
+
+	spacing := 3
 	totalButtonsWidth := 0
 	for i, b := range m.buttons {
 		totalButtonsWidth += b.Width()
@@ -201,66 +277,103 @@ func (m *Modal) Render(s tui.Surface) {
 	if totalButtonsWidth+6 > cardW {
 		cardW = totalButtonsWidth + 6
 	}
-	if cardW > sz.W-2 {
-		cardW = sz.W - 2
+
+	// Clamp to available surface dimensions
+	if cardW > sz.W {
+		cardW = sz.W
 	}
-	if cardW < 20 {
+	if cardW < 20 && sz.W >= 20 {
 		cardW = 20
+	} else if cardW < 20 {
+		cardW = sz.W
 	}
 
-	lines := strings.Split(m.body, "\n")
 	cardH := 7
 	if len(lines) > 1 {
 		cardH = len(lines) + 6
 	}
-	if cardH > sz.H-2 {
-		cardH = sz.H - 2
+	if cardH > sz.H {
+		cardH = sz.H
 	}
-	if cardH < 5 {
+	if cardH < 5 && sz.H >= 5 {
 		cardH = 5
+	} else if cardH < 5 {
+		cardH = sz.H
 	}
 
-	cx := (sz.W - cardW) / 2
-	cy := (sz.H - cardH) / 2
+	cx := max(0, (sz.W-cardW)/2)
+	cy := max(0, (sz.H-cardH)/2)
 	rect := tui.Rect{X: cx, Y: cy, W: cardW, H: cardH}
 
-	// 3. Render framed card
-	renderBoxFrame(s, rect, m.title, m.style.Card())
-	s.Fill(tui.Rect{X: cx + 1, Y: cy + 1, W: cardW - 2, H: cardH - 2}, " ", m.style.Card())
+	// 3. Render framed card with Title style applied
+	renderBoxFrame(s, rect, m.title, st.Card(), st.Title())
+	if cardW > 2 && cardH > 2 {
+		s.Fill(tui.Rect{X: cx + 1, Y: cy + 1, W: cardW - 2, H: cardH - 2}, " ", st.Card())
+	}
 
-	// 4. Render body text
+	// 4. Render body text safely truncated with Graphemes
+	maxTextW := max(1, cardW-4)
 	if len(lines) == 1 {
-		bodyText := m.body
-		if len(bodyText) > cardW-4 {
-			bodyText = bodyText[:cardW-7] + "..."
-		}
-		drawText(s, cx+(cardW-len(bodyText))/2, cy+2, bodyText, m.style.Body().Bold(true))
+		bodyText := truncateGraphemes(m.body, maxTextW, s.StringWidth)
+		textW := s.StringWidth(bodyText)
+		drawText(s, cx+max(1, (cardW-textW)/2), cy+2, bodyText, st.Body().Bold(true))
 	} else {
 		for i, line := range lines {
 			lineY := cy + 2 + i
 			if lineY < cy+cardH-3 {
-				if len(line) > cardW-4 {
-					line = line[:cardW-7] + "..."
-				}
-				drawText(s, cx+(cardW-len(line))/2, lineY, line, m.style.Body())
+				tLine := truncateGraphemes(line, maxTextW, s.StringWidth)
+				textW := s.StringWidth(tLine)
+				drawText(s, cx+max(1, (cardW-textW)/2), lineY, tLine, st.Body())
 			}
 		}
 	}
 
 	// 5. Render buttons
-	m.updateButtonFocus()
 	btnCount := len(m.buttons)
-	if btnCount == 0 {
+	if btnCount == 0 || cardH < 4 {
 		return
 	}
 
-	btnY := cy + cardH - 3
-	startX := cx + (cardW-totalButtonsWidth)/2
+	btnY := cy + cardH - 2
+	if btnY <= cy+2 {
+		btnY = cy + cardH - 1
+	}
+	startX := cx + max(1, (cardW-totalButtonsWidth)/2)
 	currX := startX
 	for _, b := range m.buttons {
-		b.RenderAt(s, currX, btnY)
+		if currX+b.Width() <= cx+cardW {
+			b.RenderAt(s, currX, btnY)
+		}
 		currX += b.Width() + spacing
 	}
+}
+
+// truncateGraphemes safely truncates s to maxW terminal columns using grapheme clusters.
+func truncateGraphemes(s string, maxW int, widthFn func(string) int) string {
+	if widthFn(s) <= maxW {
+		return s
+	}
+	targetW := maxW
+	if targetW > 3 {
+		targetW -= 3
+	} else {
+		targetW = 1
+	}
+
+	var sb strings.Builder
+	currW := 0
+	for g := range tui.Graphemes(s) {
+		gw := widthFn(g)
+		if currW+gw > targetW {
+			break
+		}
+		sb.WriteString(g)
+		currW += gw
+	}
+	if maxW > 3 {
+		sb.WriteString("...")
+	}
+	return sb.String()
 }
 
 // HandleEvent processes keyboard navigation and activation for the modal.
@@ -276,14 +389,22 @@ func (m *Modal) HandleEvent(ev tui.Event) bool {
 			m.onDismiss()
 			return true
 		}
+		// Search for explicit cancel button
 		for _, b := range m.buttons {
-			lbl := strings.ToLower(b.label)
-			if lbl == "no" || lbl == "cancel" || lbl == "close" {
+			if b.Role() == ButtonRoleCancel && !b.Disabled() {
 				b.Trigger()
 				return true
 			}
 		}
-		if len(m.buttons) > 0 {
+		// Fallback to button labeled Cancel/No/Close or last button
+		for _, b := range m.buttons {
+			lbl := strings.ToLower(b.Label())
+			if (lbl == "cancel" || lbl == "no" || lbl == "close") && !b.Disabled() {
+				b.Trigger()
+				return true
+			}
+		}
+		if len(m.buttons) > 0 && !m.buttons[len(m.buttons)-1].Disabled() {
 			m.buttons[len(m.buttons)-1].Trigger()
 			return true
 		}
@@ -316,17 +437,16 @@ func (m *Modal) HandleEvent(ev tui.Event) bool {
 		return true
 
 	default:
-		// Check for mnemonic hotkey matching first letter of button label
-		codeLower := strings.ToLower(string(ke.Code))
-		if len(codeLower) > 0 {
-			r := []rune(codeLower)[0]
-			for i, b := range m.buttons {
-				lblLower := strings.ToLower(b.label)
-				if len(lblLower) > 0 && []rune(lblLower)[0] == r {
-					m.SetSelectedButton(i)
-					b.Trigger()
-					return true
-				}
+		// Check for explicit button mnemonic
+		keyRune := rune(ke.Code)
+		for i, b := range m.buttons {
+			if b.Disabled() {
+				continue
+			}
+			if b.Mnemonic() != 0 && unicode.ToLower(b.Mnemonic()) == unicode.ToLower(keyRune) {
+				m.SetSelectedButton(i)
+				b.Trigger()
+				return true
 			}
 		}
 	}

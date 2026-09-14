@@ -1,8 +1,10 @@
 package editor
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yongjohnlee80/golib/tui"
 	"github.com/yongjohnlee80/golib/tui/style"
@@ -33,7 +35,7 @@ func (m *mockSurface) Fill(r tui.Rect, content string, st style.Style) {
 
 func (m *mockSurface) Sub(r tui.Rect) tui.Surface { return m }
 func (m *mockSurface) Size() tui.Size             { return tui.Size{W: m.w, H: m.h} }
-func (m *mockSurface) StringWidth(s string) int   { return len(s) }
+func (m *mockSurface) StringWidth(s string) int   { return tui.StringWidth(s) }
 func (m *mockSurface) Theme() *style.Theme        { return nil }
 func (m *mockSurface) Caps() tui.Capabilities     { return tui.Capabilities{} }
 
@@ -76,6 +78,15 @@ func TestButton_StandaloneWidget(t *testing.T) {
 		t.Fatalf("after SetLabel: Label() = %q, want %q", btn.Label(), "Save")
 	}
 
+	// Roles and Mnemonics
+	btn.SetRole(ButtonRoleDefault).SetMnemonic('s')
+	if btn.Role() != ButtonRoleDefault {
+		t.Fatalf("Role() = %v, want ButtonRoleDefault", btn.Role())
+	}
+	if btn.Mnemonic() != 's' {
+		t.Fatalf("Mnemonic() = %c, want 's'", btn.Mnemonic())
+	}
+
 	// Trigger callback directly
 	btn.Trigger()
 	if !clicked {
@@ -97,10 +108,10 @@ func TestButton_StandaloneWidget(t *testing.T) {
 		t.Fatal("unfocused button must not handle KeyEnter or invoke callback")
 	}
 
-	// Focus button -> handles KeyEnter and Space
-	btn.SetFocused(true)
+	// Focus button via FocusEvent
+	btn.HandleEvent(tui.FocusEvent{Gained: true})
 	if !btn.Focused() {
-		t.Fatal("Focused() should return true after SetFocused(true)")
+		t.Fatal("Focused() should return true after FocusEvent{Gained: true}")
 	}
 	handled = btn.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
 	if !handled || !altClicked {
@@ -118,6 +129,21 @@ func TestButton_StandaloneWidget(t *testing.T) {
 	if handled {
 		t.Fatal("focused button should not handle unrelated key 'x'")
 	}
+
+	// Test disabled button
+	btn.SetDisabled(true)
+	if btn.AcceptsFocus() {
+		t.Fatal("disabled button must not accept focus")
+	}
+	if btn.Focused() {
+		t.Fatal("disabled button must not be focused")
+	}
+	handled = btn.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
+	if handled {
+		t.Fatal("disabled button must not handle activation key")
+	}
+
+	btn.SetDisabled(false)
 
 	// Layout constraints
 	sz := btn.Layout(tui.Constraints{MinW: 0, MaxW: 80, MinH: 0, MaxH: 24})
@@ -153,14 +179,71 @@ func TestButton_StandaloneWidget(t *testing.T) {
 	}
 }
 
+func TestButton_AppLifecycleAndFocusActivation(t *testing.T) {
+	tb := tui.NewTestBackend(80, 24)
+	var clicked bool
+	btn := NewButton("Save", func() {
+		clicked = true
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	app := tui.NewApp(btn, tui.WithBackend(tb))
+	done := make(chan error, 1)
+	go func() { done <- app.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Error("App.Run did not return within 3s after cancel")
+		}
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// In real App, the framework focus manager automatically focuses the root Focusable component.
+	// Inject Enter via TestBackend without any manual SetFocused call:
+	tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
+	time.Sleep(50 * time.Millisecond)
+
+	if !clicked {
+		t.Fatal("Button did not activate on Enter when mounted in real App and focused by framework focus manager")
+	}
+
+	// Disable button and verify it no longer activates
+	clicked = false
+	btn.SetDisabled(true)
+	time.Sleep(30 * time.Millisecond)
+
+	if btn.AcceptsFocus() {
+		t.Fatal("Disabled button must report AcceptsFocus() == false")
+	}
+
+	tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
+	time.Sleep(30 * time.Millisecond)
+	if clicked {
+		t.Fatal("Disabled button must not activate on Enter")
+	}
+}
+
+func TestButton_UnicodeWidth(t *testing.T) {
+	btn := NewButton("保存", nil)
+	// "[ 保存 ]" = "[" (1) + " " (1) + "保" (2) + "存" (2) + " " (1) + "]" (1) = 8 cells
+	if w := btn.Width(); w != 8 {
+		t.Fatalf("Width() for CJK button = %d, want 8", w)
+	}
+}
+
 func TestButtonStyle_Standalone(t *testing.T) {
-	// Nil receiver tests fallback to defaultButtonStyle
 	var nilStyle *ButtonStyle
 	if nilStyle.Normal() != defaultButtonStyle.normal {
 		t.Fatal("nilStyle.Normal() did not return defaultButtonStyle.normal")
 	}
 	if nilStyle.Focused() != defaultButtonStyle.focused {
 		t.Fatal("nilStyle.Focused() did not return defaultButtonStyle.focused")
+	}
+	if nilStyle.Disabled() != defaultButtonStyle.disabled {
+		t.Fatal("nilStyle.Disabled() did not return defaultButtonStyle.disabled")
 	}
 	if nilStyle.Style(false) != defaultButtonStyle.normal {
 		t.Fatal("nilStyle.Style(false) did not return defaultButtonStyle.normal")
@@ -169,20 +252,17 @@ func TestButtonStyle_Standalone(t *testing.T) {
 		t.Fatal("nilStyle.Style(true) did not return defaultButtonStyle.focused")
 	}
 
-	// Custom ButtonStyle
 	norm := style.New().Foreground(style.ANSI(1))
 	foc := style.New().Foreground(style.ANSI(2))
-	bs := NewButtonStyle(norm, foc)
+	dis := style.New().Foreground(style.ANSI(8))
+	bs := NewButtonStyleWithDisabled(norm, foc, dis)
 	if bs.Normal() != norm {
 		t.Fatal("bs.Normal() did not return custom norm")
 	}
 	if bs.Focused() != foc {
 		t.Fatal("bs.Focused() did not return custom foc")
 	}
-	if bs.Style(false) != norm {
-		t.Fatal("bs.Style(false) did not return custom norm")
-	}
-	if bs.Style(true) != foc {
-		t.Fatal("bs.Style(true) did not return custom foc")
+	if bs.Disabled() != dis {
+		t.Fatal("bs.Disabled() did not return custom dis")
 	}
 }
