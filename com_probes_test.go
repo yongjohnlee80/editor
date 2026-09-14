@@ -161,7 +161,7 @@ func TestProbe3_OneButtonModalTabTrapping(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Inject Tab
-	tb.InjectKey(tui.KeyTab, 0, 0)
+	tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyTab})
 	time.Sleep(50 * time.Millisecond)
 
 	// Verify button retains focus
@@ -174,7 +174,7 @@ func TestProbe3_OneButtonModalTabTrapping(t *testing.T) {
 	}
 
 	// Press Enter - button should trigger
-	tb.InjectKey(tui.KeyEnter, 0, 0)
+	tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
 	time.Sleep(50 * time.Millisecond)
 
 	if !okClicked {
@@ -226,7 +226,7 @@ func TestProbe4_DisabledFirstButtonFocus(t *testing.T) {
 	}
 
 	// Press Enter - enabled button must trigger
-	tb.InjectKey(tui.KeyEnter, 0, 0)
+	tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
 	time.Sleep(50 * time.Millisecond)
 
 	if !enabledTriggered {
