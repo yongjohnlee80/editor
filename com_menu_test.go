@@ -6,7 +6,6 @@ import (
 
 	"github.com/yongjohnlee80/golib/tui"
 	"github.com/yongjohnlee80/golib/tui/style"
-	"github.com/yongjohnlee80/golib/tui/widget"
 )
 
 func TestTopMenu_Definition(t *testing.T) {
