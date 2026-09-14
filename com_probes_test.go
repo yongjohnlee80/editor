@@ -36,6 +36,8 @@ func (c *focusTrackingContainer) Layout(con tui.Constraints) tui.Size {
 	return con.Constrain(tui.Size{W: 20, H: 5})
 }
 
+func (c *focusTrackingContainer) Render(s tui.Surface) {}
+
 func (c *focusTrackingContainer) HandleEvent(ev tui.Event) bool {
 	if fe, ok := ev.(tui.FocusEvent); ok {
 		c.focusEvents = append(c.focusEvents, fe)
