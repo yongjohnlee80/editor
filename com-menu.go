@@ -1084,7 +1084,7 @@ func renderBoxFrame(s tui.Surface, r tui.Rect, title string, frameSt style.Style
 		s.SetCell(r.X+r.W-1, y, "│", frameSt)
 	}
 
-	// Title
+	// Title drawn after borders to overwrite top border cells cleanly
 	if title != "" {
 		tw := s.StringWidth(title)
 		if r.W > tw+4 {
