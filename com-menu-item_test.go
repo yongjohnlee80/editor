@@ -1,12 +1,13 @@
 package editor
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yongjohnlee80/golib/tui"
 	"github.com/yongjohnlee80/golib/tui/style"
-	"github.com/yongjohnlee80/golib/tui/widget"
 )
 
 func TestMenuItem_StandaloneWidget(t *testing.T) {
@@ -113,31 +114,69 @@ func TestMenuItem_StandaloneWidget(t *testing.T) {
 	}
 }
 
-func TestMenuItem_SubmenuAndKeyset(t *testing.T) {
-	var vimTriggered bool
-	sub1 := NewMenuItemWithKeyset("1. Vim  (modal)", '1', 0, widget.KeysetVim, func() {
-		vimTriggered = true
+func TestMenuItem_SubmenuAndChildMounting(t *testing.T) {
+	var sub1Triggered bool
+	sub1 := NewCheckableMenuItem("1. Vim  (modal)", '1', 0, true, func() {
+		sub1Triggered = true
 	})
-	sub2 := NewMenuItemWithKeyset("2. Nano (modeless)", '2', 0, widget.KeysetNano, nil)
+	sub2 := NewCheckableMenuItem("2. Nano (modeless)", '2', 0, false, nil)
 
 	parent := NewMenuItemWithSubmenu("Keymaps", 'k', 0, sub1, sub2)
 
 	if !parent.HasSubmenu() {
 		t.Fatal("parent.HasSubmenu() should return true")
 	}
-	if len(parent.Submenu) != 2 {
-		t.Fatalf("len(parent.Submenu) = %d, want 2", len(parent.Submenu))
+	if len(parent.Submenu()) != 2 {
+		t.Fatalf("len(parent.Submenu()) = %d, want 2", len(parent.Submenu()))
 	}
 	if !sub1.Checkable() {
 		t.Fatal("sub1 should be checkable")
 	}
-	if sub1.Keyset != widget.KeysetVim {
-		t.Fatalf("sub1.Keyset = %v, want KeysetVim", sub1.Keyset)
+	if !sub1.Checked() {
+		t.Fatal("sub1 should be checked initially")
 	}
 
 	sub1.Trigger()
-	if !vimTriggered {
+	if !sub1Triggered {
 		t.Fatal("sub1.Trigger() did not invoke action")
+	}
+
+	// Defensive copy verification
+	subs := parent.Submenu()
+	subs[0] = nil
+	if parent.Submenu()[0] == nil {
+		t.Fatal("parent.Submenu() must return a defensive copy")
+	}
+
+	// Real App mounting test to verify distinct NodeIDs
+	tb := tui.NewTestBackend(80, 24)
+	ctx, cancel := context.WithCancel(context.Background())
+	app := tui.NewApp(parent, tui.WithBackend(tb))
+	done := make(chan error, 1)
+	go func() { done <- app.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Error("App.Run did not return within 3s after cancel")
+		}
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	parentID := parent.NodeID()
+	sub1ID := sub1.NodeID()
+	sub2ID := sub2.NodeID()
+
+	if parentID == 0 || sub1ID == 0 || sub2ID == 0 {
+		t.Fatalf("expected non-zero NodeIDs for all mounted items: parent=%d, sub1=%d, sub2=%d", parentID, sub1ID, sub2ID)
+	}
+	if sub1ID == parentID || sub2ID == parentID {
+		t.Fatalf("child submenu items must not reuse parent NodeID %d; got sub1=%d, sub2=%d", parentID, sub1ID, sub2ID)
+	}
+	if sub1ID == sub2ID {
+		t.Fatalf("submenu items must each have distinct NodeIDs; got sub1=%d, sub2=%d", sub1ID, sub2ID)
 	}
 
 	// Rendering parent with submenu arrow ►
@@ -152,7 +191,6 @@ func TestMenuItem_SubmenuAndKeyset(t *testing.T) {
 	}
 
 	// Rendering checkable child with bullet •
-	sub1.SetChecked(true)
 	subSurf := newMockSurface(24, 3)
 	sub1.RenderAt(subSurf, 1, 1, 22)
 	subScreen := subSurf.String()
@@ -161,5 +199,13 @@ func TestMenuItem_SubmenuAndKeyset(t *testing.T) {
 	}
 	if !strings.Contains(subScreen, "1. Vim") {
 		t.Fatalf("rendered checkable child missing text; screen:\n%s", subScreen)
+	}
+}
+
+func TestMenuItem_UnicodeDisplayWidth(t *testing.T) {
+	cjkItem := NewMenuItem("文件", 'f', 0, nil)
+	// "文件" = 4 cells + 4 = 8
+	if w := cjkItem.Width(); w != 8 {
+		t.Fatalf("Width() for CJK item = %d, want 8", w)
 	}
 }
