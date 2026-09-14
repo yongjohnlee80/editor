@@ -3,8 +3,8 @@ package editor
 import "github.com/yongjohnlee80/golib/tui"
 
 // This file contains the interface and type declarations for the command
-// layer. Concrete implementations live in commands-response.go; the dispatch
-// table lives in commands-registry.go; OS-level commands live in commands-os.go.
+// layer. Concrete implementations live in commands_response.go; the dispatch
+// table lives in commands_registry.go; OS-level commands live in commands_os.go.
 //
 // # Design overview
 //
@@ -63,7 +63,7 @@ const (
 // All three methods are available on the interface so callers never need a
 // type assertion: switch on Status(), read Result() on OK, read Err() on
 // Refused/Unknown. The concrete implementation is Response[R] in
-// commands-response.go.
+// commands_response.go.
 type CommandResponse[R any] interface {
 	// Status returns the outcome of the command execution.
 	Status() CommandStatus
@@ -86,7 +86,7 @@ type CommandResponse[R any] interface {
 //     ":w path/to/file"), already trimmed. Empty for commands with no argument.
 //
 // Commands return a CommandResponse[R] — typically a Response[R] built with
-// the Ok, Prompt, or Refuse[R] constructors from commands-response.go.
+// the Ok, Prompt, or Refuse[R] constructors from commands_response.go.
 //
 // There is no separate error return. Every outcome is expressed through the
 // response's Status and Err() so callers stay uniform.
