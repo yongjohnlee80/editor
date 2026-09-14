@@ -163,11 +163,19 @@ func TestMenuItem_SubmenuAndChildMounting(t *testing.T) {
 		}
 	}()
 
-	time.Sleep(50 * time.Millisecond)
-
-	parentID := parent.NodeID()
-	sub1ID := sub1.NodeID()
-	sub2ID := sub2.NodeID()
+	var parentID, sub1ID, sub2ID tui.NodeID
+	doneUpdate := make(chan struct{})
+	app.Update(func() {
+		parentID = parent.NodeID()
+		sub1ID = sub1.NodeID()
+		sub2ID = sub2.NodeID()
+		close(doneUpdate)
+	})
+	select {
+	case <-doneUpdate:
+	case <-time.After(3 * time.Second):
+		t.Fatal("app.Update did not execute within 3s")
+	}
 
 	if parentID == 0 || sub1ID == 0 || sub2ID == 0 {
 		t.Fatalf("expected non-zero NodeIDs for all mounted items: parent=%d, sub1=%d, sub2=%d", parentID, sub1ID, sub2ID)
