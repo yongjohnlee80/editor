@@ -513,7 +513,7 @@ func TestMenuStyle_Standalone(t *testing.T) {
 		t.Fatal("tm.Bar().MenuStyle() did not return custom style after SetStyle")
 	}
 
-	tm.Bar().SetStyles(bar, accent, highlight, highlightAccent, border)
+	tm.Bar().SetStyles(bar, acc, hl, hlAcc, border)
 	if tm.MenuStyle().Bar() != bar {
 		t.Fatal("Bar().SetStyles did not apply custom bar style")
 	}
