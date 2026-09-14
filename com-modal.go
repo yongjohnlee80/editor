@@ -227,9 +227,82 @@ func (m *Modal) AcceptsFocus() bool {
 	return true
 }
 
-// Layout sizes the modal to match container constraints.
+// Layout sizes the modal to match container constraints and places its child buttons.
 func (m *Modal) Layout(c tui.Constraints) tui.Size {
-	return c.Constrain(tui.Size{W: c.MaxW, H: c.MaxH})
+	sz := c.Constrain(tui.Size{W: c.MaxW, H: c.MaxH})
+	if sz.W <= 0 || sz.H <= 0 {
+		return sz
+	}
+
+	cardW := 36
+	titleW := m.measure(m.title) + 6
+	if titleW > cardW {
+		cardW = titleW
+	}
+
+	lines := strings.Split(m.body, "\n")
+	for _, l := range lines {
+		lw := m.measure(l) + 6
+		if lw > cardW {
+			cardW = lw
+		}
+	}
+
+	spacing := 3
+	totalButtonsWidth := 0
+	for i, b := range m.buttons {
+		totalButtonsWidth += b.Width()
+		if i > 0 {
+			totalButtonsWidth += spacing
+		}
+	}
+	if totalButtonsWidth+6 > cardW {
+		cardW = totalButtonsWidth + 6
+	}
+
+	if cardW > sz.W {
+		cardW = sz.W
+	}
+	if cardW < 20 && sz.W >= 20 {
+		cardW = 20
+	} else if cardW < 20 {
+		cardW = sz.W
+	}
+
+	cardH := 7
+	if len(lines) > 1 {
+		cardH = len(lines) + 6
+	}
+	if cardH > sz.H {
+		cardH = sz.H
+	}
+	if cardH < 5 && sz.H >= 5 {
+		cardH = 5
+	} else if cardH < 5 {
+		cardH = sz.H
+	}
+
+	cx := max(0, (sz.W-cardW)/2)
+	cy := max(0, (sz.H-cardH)/2)
+
+	btnY := cy + cardH - 2
+	if btnY <= cy+2 {
+		btnY = cy + cardH - 1
+	}
+	startX := cx + max(1, (cardW-totalButtonsWidth)/2)
+	currX := startX
+
+	ctx := m.Context()
+	for _, b := range m.buttons {
+		bw := b.Width()
+		if ctx != nil {
+			bsz := ctx.LayoutChild(b, tui.Tight(tui.Size{W: bw, H: 1}))
+			ctx.PlaceChild(b, tui.Rect{X: currX, Y: btnY, W: bsz.W, H: bsz.H})
+		}
+		currX += bw + spacing
+	}
+
+	return sz
 }
 
 func (m *Modal) measure(s string) int {

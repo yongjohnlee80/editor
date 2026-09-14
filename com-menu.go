@@ -908,7 +908,12 @@ func (mo *MenuOverlay) Layout(c tui.Constraints) tui.Size {
 	if !mo.menu.dropdownOpen && len(mo.menu.submenuStack) == 0 && mo.menu.activeModal == nil {
 		return tui.Size{}
 	}
-	return c.Constrain(tui.Size{W: c.MaxW, H: c.MaxH})
+	sz := c.Constrain(tui.Size{W: c.MaxW, H: c.MaxH})
+	if mo.menu.activeModal != nil && mo.ctx != nil {
+		msz := mo.ctx.LayoutChild(mo.menu.activeModal, c)
+		mo.ctx.PlaceChild(mo.menu.activeModal, tui.Rect{X: 0, Y: 0, W: msz.W, H: msz.H})
+	}
+	return sz
 }
 
 // Render paints dropdowns, cascading submenus, or active modals on the overlay surface.
