@@ -2,6 +2,7 @@ package editor
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,6 +47,31 @@ func (c *focusTrackingContainer) HandleEvent(ev tui.Event) bool {
 	return false
 }
 
+func runOnLoop(app *tui.App, fn func()) {
+	done := make(chan struct{})
+	app.Update(func() {
+		fn()
+		close(done)
+	})
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		panic("app.Update timed out")
+	}
+}
+
+func waitForCond(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for %s", what)
+}
+
 // TestProbe1_ButtonFocusEventBubbling verifies that Button.HandleEvent does NOT swallow
 // FocusEvent, allowing ancestor panels (such as widget.Box) to observe focus transitions.
 func TestProbe1_ButtonFocusEventBubbling(t *testing.T) {
@@ -61,44 +87,31 @@ func TestProbe1_ButtonFocusEventBubbling(t *testing.T) {
 	go func() { done <- app.Run(ctx) }()
 
 	// Focus the button
-	doneUpdate := make(chan struct{})
-	app.Update(func() {
+	runOnLoop(app, func() {
 		container.Context().FocusComponent(btn)
-		close(doneUpdate)
-	})
-	select {
-	case <-doneUpdate:
-	case <-time.After(2 * time.Second):
-		t.Fatal("app.Update timed out")
-	}
-
-	// Wait briefly for event pump to process focus events
-	time.Sleep(50 * time.Millisecond)
-
-	var events []tui.FocusEvent
-	app.Update(func() {
-		events = make([]tui.FocusEvent, len(container.focusEvents))
-		copy(events, container.focusEvents)
 	})
 
-	var gainedCount int
-	for _, fe := range events {
-		if fe.Gained {
-			gainedCount++
-		}
-	}
-
-	if gainedCount == 0 {
-		t.Fatalf("ancestor container received no FocusEvent(Gained=true) when child button was focused; observed events: %+v", events)
-	}
+	// Wait for FocusEvent(Gained=true) to bubble to ancestor container
+	waitForCond(t, "FocusEvent(Gained=true) to bubble to ancestor container", func() bool {
+		var hasGained bool
+		runOnLoop(app, func() {
+			for _, fe := range container.focusEvents {
+				if fe.Gained {
+					hasGained = true
+					break
+				}
+			}
+		})
+		return hasGained
+	})
 }
 
 // TestProbe2_StandaloneMenuItemFocusActivation verifies that a standalone MenuItem
 // handles FocusEvent and activates on Enter/Space when focused by the framework.
 func TestProbe2_StandaloneMenuItemFocusActivation(t *testing.T) {
-	var activated bool
+	var activated atomic.Bool
 	item := NewMenuItem("Standalone Action", 's', 0, func() {
-		activated = true
+		activated.Store(true)
 	})
 
 	tb := tui.NewTestBackend(80, 24)
@@ -110,43 +123,32 @@ func TestProbe2_StandaloneMenuItemFocusActivation(t *testing.T) {
 	go func() { done <- app.Run(ctx) }()
 
 	// Focus the MenuItem via the framework
-	doneUpdate := make(chan struct{})
-	app.Update(func() {
+	runOnLoop(app, func() {
 		item.Context().FocusComponent(item)
-		close(doneUpdate)
 	})
-	select {
-	case <-doneUpdate:
-	case <-time.After(2 * time.Second):
-		t.Fatal("app.Update timed out")
-	}
 
-	time.Sleep(50 * time.Millisecond)
-
-	// Verify the item is focused
-	var isFocused bool
-	app.Update(func() {
-		isFocused = item.Focused()
+	waitForCond(t, "standalone MenuItem to be focused", func() bool {
+		var isFocused bool
+		runOnLoop(app, func() {
+			isFocused = item.Focused()
+		})
+		return isFocused
 	})
-	if !isFocused {
-		t.Fatal("standalone MenuItem should be focused after item.Context().FocusComponent")
-	}
 
 	// Press Enter to activate
 	tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
-	time.Sleep(50 * time.Millisecond)
 
-	if !activated {
-		t.Fatal("framework-focused standalone MenuItem did not activate on Enter")
-	}
+	waitForCond(t, "framework-focused standalone MenuItem to activate on Enter", func() bool {
+		return activated.Load()
+	})
 }
 
 // TestProbe3_OneButtonModalTabTrapping verifies that Tab navigation in a one-button
 // Modal does not cycle focus onto the Modal container itself.
 func TestProbe3_OneButtonModalTabTrapping(t *testing.T) {
-	var okClicked bool
+	var okClicked atomic.Bool
 	okBtn := NewButton("OK", func() {
-		okClicked = true
+		okClicked.Store(true)
 	})
 	modal := NewModal("Notice", "Single button dialog", okBtn)
 
@@ -158,15 +160,24 @@ func TestProbe3_OneButtonModalTabTrapping(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- app.Run(ctx) }()
 
-	time.Sleep(50 * time.Millisecond)
+	// Wait for modal okBtn to be focused
+	waitForCond(t, "modal okBtn to be focused", func() bool {
+		var f bool
+		runOnLoop(app, func() {
+			f = okBtn.Focused()
+		})
+		return f
+	})
 
 	// Inject Tab
 	tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyTab})
-	time.Sleep(50 * time.Millisecond)
+
+	// Roundtrip through loop to ensure Tab was handled
+	runOnLoop(app, func() {})
 
 	// Verify button retains focus
 	var btnFocused bool
-	app.Update(func() {
+	runOnLoop(app, func() {
 		btnFocused = okBtn.Focused()
 	})
 	if !btnFocused {
@@ -175,11 +186,10 @@ func TestProbe3_OneButtonModalTabTrapping(t *testing.T) {
 
 	// Press Enter - button should trigger
 	tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
-	time.Sleep(50 * time.Millisecond)
 
-	if !okClicked {
-		t.Fatal("button in one-button Modal did not trigger on Enter after Tab")
-	}
+	waitForCond(t, "ok button in one-button Modal to trigger on Enter", func() bool {
+		return okClicked.Load()
+	})
 }
 
 // TestProbe4_DisabledFirstButtonFocus verifies that a Modal whose first button is
@@ -190,9 +200,9 @@ func TestProbe4_DisabledFirstButtonFocus(t *testing.T) {
 	})
 	disabledBtn.SetDisabled(true)
 
-	var enabledTriggered bool
+	var enabledTriggered atomic.Bool
 	enabledBtn := NewButton("Enabled", func() {
-		enabledTriggered = true
+		enabledTriggered.Store(true)
 	})
 
 	modal := NewModal("Dialog", "First button is disabled", disabledBtn, enabledBtn)
@@ -205,11 +215,17 @@ func TestProbe4_DisabledFirstButtonFocus(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- app.Run(ctx) }()
 
-	time.Sleep(50 * time.Millisecond)
+	waitForCond(t, "enabled button to be focused", func() bool {
+		var enFocused bool
+		runOnLoop(app, func() {
+			enFocused = enabledBtn.Focused()
+		})
+		return enFocused
+	})
 
 	var selIdx int
 	var disFocused, enFocused bool
-	app.Update(func() {
+	runOnLoop(app, func() {
 		selIdx = modal.SelectedButton()
 		disFocused = disabledBtn.Focused()
 		enFocused = enabledBtn.Focused()
@@ -227,11 +243,10 @@ func TestProbe4_DisabledFirstButtonFocus(t *testing.T) {
 
 	// Press Enter - enabled button must trigger
 	tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
-	time.Sleep(50 * time.Millisecond)
 
-	if !enabledTriggered {
-		t.Fatal("enabled button was not triggered on Enter")
-	}
+	waitForCond(t, "enabled button to trigger on Enter", func() bool {
+		return enabledTriggered.Load()
+	})
 }
 
 // TestMenuSafety_DisabledAndEmptyNavigation verifies that disabled menu items are skipped,
