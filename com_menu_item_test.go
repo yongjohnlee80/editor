@@ -163,12 +163,10 @@ func TestMenuItem_SubmenuAndChildMounting(t *testing.T) {
 		}
 	}()
 
-	var parentID, sub1ID, sub2ID tui.NodeID
+	var parentID tui.NodeID
 	doneUpdate := make(chan struct{})
 	app.Update(func() {
 		parentID = parent.NodeID()
-		sub1ID = sub1.NodeID()
-		sub2ID = sub2.NodeID()
 		close(doneUpdate)
 	})
 	select {
@@ -177,14 +175,12 @@ func TestMenuItem_SubmenuAndChildMounting(t *testing.T) {
 		t.Fatal("app.Update did not execute within 3s")
 	}
 
-	if parentID == 0 || sub1ID == 0 || sub2ID == 0 {
-		t.Fatalf("expected non-zero NodeIDs for all mounted items: parent=%d, sub1=%d, sub2=%d", parentID, sub1ID, sub2ID)
+	if parentID == 0 {
+		t.Fatalf("expected non-zero NodeID for mounted parent item: parent=%d", parentID)
 	}
-	if sub1ID == parentID || sub2ID == parentID {
-		t.Fatalf("child submenu items must not reuse parent NodeID %d; got sub1=%d, sub2=%d", parentID, sub1ID, sub2ID)
-	}
-	if sub1ID == sub2ID {
-		t.Fatalf("submenu items must each have distinct NodeIDs; got sub1=%d, sub2=%d", sub1ID, sub2ID)
+	// Submenus are an extensible data model and are not recursively auto-mounted by parent (F2).
+	if sub1.NodeID() != 0 || sub2.NodeID() != 0 {
+		t.Fatalf("submenu items must remain unmounted data models until explicitly mounted; got sub1=%d, sub2=%d", sub1.NodeID(), sub2.NodeID())
 	}
 
 	// Rendering parent with submenu arrow ►
