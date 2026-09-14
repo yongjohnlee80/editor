@@ -63,7 +63,7 @@ func TestProbe1_ButtonFocusEventBubbling(t *testing.T) {
 	// Focus the button
 	doneUpdate := make(chan struct{})
 	app.Update(func() {
-		app.FocusComponent(btn)
+		container.Context().FocusComponent(btn)
 		close(doneUpdate)
 	})
 	select {
@@ -112,7 +112,7 @@ func TestProbe2_StandaloneMenuItemFocusActivation(t *testing.T) {
 	// Focus the MenuItem via the framework
 	doneUpdate := make(chan struct{})
 	app.Update(func() {
-		app.FocusComponent(item)
+		item.Context().FocusComponent(item)
 		close(doneUpdate)
 	})
 	select {
@@ -129,7 +129,7 @@ func TestProbe2_StandaloneMenuItemFocusActivation(t *testing.T) {
 		isFocused = item.Focused()
 	})
 	if !isFocused {
-		t.Fatal("standalone MenuItem should be focused after app.FocusComponent")
+		t.Fatal("standalone MenuItem should be focused after item.Context().FocusComponent")
 	}
 
 	// Press Enter to activate
