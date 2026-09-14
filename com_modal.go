@@ -213,6 +213,32 @@ func (m *Modal) SetStyles(card, title, body, scrim style.Style) *Modal {
 }
 
 func (m *Modal) syncFocus() {
+	if len(m.buttons) == 0 {
+		m.selected = -1
+		return
+	}
+
+	// If current selection is invalid or points to a disabled button, choose the first enabled button.
+	// Preference: first enabled button with ButtonRoleDefault, then first enabled button.
+	if m.selected < 0 || m.selected >= len(m.buttons) || m.buttons[m.selected].Disabled() {
+		chosen := -1
+		for i, b := range m.buttons {
+			if !b.Disabled() && b.Role() == ButtonRoleDefault {
+				chosen = i
+				break
+			}
+		}
+		if chosen == -1 {
+			for i, b := range m.buttons {
+				if !b.Disabled() {
+					chosen = i
+					break
+				}
+			}
+		}
+		m.selected = chosen
+	}
+
 	for i, b := range m.buttons {
 		isSel := (i == m.selected)
 		b.SetFocused(isSel)
@@ -222,9 +248,10 @@ func (m *Modal) syncFocus() {
 	}
 }
 
-// AcceptsFocus implements tui.Focusable.
+// AcceptsFocus implements tui.Focusable. A Modal with buttons delegates focus to its child buttons,
+// serving as a FocusScope rather than a focusable leaf.
 func (m *Modal) AcceptsFocus() bool {
-	return true
+	return len(m.buttons) == 0
 }
 
 // Layout sizes the modal to match container constraints and places its child buttons.
@@ -342,7 +369,7 @@ func (m *Modal) Render(s tui.Surface) {
 	spacing := 3
 	totalButtonsWidth := 0
 	for i, b := range m.buttons {
-		totalButtonsWidth += b.Width()
+		totalButtonsWidth += s.StringWidth(b.FormattedLabel())
 		if i > 0 {
 			totalButtonsWidth += spacing
 		}
@@ -401,23 +428,26 @@ func (m *Modal) Render(s tui.Surface) {
 		}
 	}
 
-	// 5. Render buttons
-	btnCount := len(m.buttons)
-	if btnCount == 0 || cardH < 4 {
-		return
-	}
-
-	btnY := cy + cardH - 2
-	if btnY <= cy+2 {
-		btnY = cy + cardH - 1
-	}
-	startX := cx + max(1, (cardW-totalButtonsWidth)/2)
-	currX := startX
-	for _, b := range m.buttons {
-		if currX+b.Width() <= cx+cardW {
-			b.RenderAt(s, currX, btnY)
+	// 5. Render buttons (only when unmounted in direct surface tests; mounted buttons are auto-rendered by runtime)
+	if m.Context() == nil {
+		btnCount := len(m.buttons)
+		if btnCount == 0 || cardH < 4 {
+			return
 		}
-		currX += b.Width() + spacing
+
+		btnY := cy + cardH - 2
+		if btnY <= cy+2 {
+			btnY = cy + cardH - 1
+		}
+		startX := cx + max(1, (cardW-totalButtonsWidth)/2)
+		currX := startX
+		for _, b := range m.buttons {
+			bw := s.StringWidth(b.FormattedLabel())
+			if currX+bw <= cx+cardW {
+				b.RenderAt(s, currX, btnY)
+			}
+			currX += bw + spacing
+		}
 	}
 }
 
@@ -469,33 +499,24 @@ func (m *Modal) HandleEvent(ev tui.Event) bool {
 				return true
 			}
 		}
-		// Fallback to button labeled Cancel/No/Close or last button
-		for _, b := range m.buttons {
-			lbl := strings.ToLower(b.Label())
-			if (lbl == "cancel" || lbl == "no" || lbl == "close") && !b.Disabled() {
-				b.Trigger()
-				return true
-			}
-		}
-		if len(m.buttons) > 0 && !m.buttons[len(m.buttons)-1].Disabled() {
-			m.buttons[len(m.buttons)-1].Trigger()
-			return true
-		}
 		return false
 
 	case tui.KeyLeft, tui.KeyUp, 'h', 'k':
 		if len(m.buttons) > 1 {
 			m.SelectPrev()
-			return true
 		}
+		return true
 
 	case tui.KeyRight, tui.KeyDown, 'l', 'j':
 		if len(m.buttons) > 1 {
 			m.SelectNext()
-			return true
 		}
+		return true
 
 	case tui.KeyTab:
+		if len(m.buttons) == 1 {
+			return true // Confine focus inside the modal dialog
+		}
 		if len(m.buttons) > 1 {
 			if ke.Mods&tui.ModShift != 0 {
 				m.SelectPrev()
@@ -506,8 +527,18 @@ func (m *Modal) HandleEvent(ev tui.Event) bool {
 		}
 
 	case tui.KeyEnter, ' ':
-		m.TriggerFocused()
-		return true
+		if m.selected >= 0 && m.selected < len(m.buttons) && !m.buttons[m.selected].Disabled() {
+			m.buttons[m.selected].Trigger()
+			return true
+		}
+		// Fallback to explicit default role button if focused button is disabled
+		for _, b := range m.buttons {
+			if b.Role() == ButtonRoleDefault && !b.Disabled() {
+				b.Trigger()
+				return true
+			}
+		}
+		return false
 
 	default:
 		// Check for explicit button mnemonic

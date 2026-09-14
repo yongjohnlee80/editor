@@ -25,13 +25,16 @@ type MenuItemStatus struct {
 type MenuItem struct {
 	widget.Base
 
-	Name      string
-	Hotkey    rune
+	Name string
+	// Hotkey is the mnemonic rune character for shortcut activation.
+	Hotkey rune
+	// HotkeyIdx is the 0-based grapheme index within Name of the mnemonic character to highlight.
 	HotkeyIdx int
 
 	action func()
 
 	// Status flags
+	focused   bool
 	selected  bool
 	disabled  bool
 	checked   bool
@@ -81,14 +84,9 @@ func NewCheckableMenuItem(name string, hotkey rune, hotkeyIdx int, checked bool,
 	}
 }
 
-// Init mounts the menu item into the TUI context and framework-mounts child submenu items.
+// Init mounts the menu item into the TUI context.
 func (mi *MenuItem) Init(ctx *tui.Context) {
 	mi.Base.Init(ctx)
-	for _, sub := range mi.submenu {
-		if sub != nil {
-			ctx.Mount(sub)
-		}
-	}
 }
 
 // Action returns the item's callback action.
@@ -110,6 +108,23 @@ func (mi *MenuItem) Trigger() {
 	if mi.action != nil {
 		mi.action()
 	}
+}
+
+// Focused reports whether the menu item currently has focus.
+func (mi *MenuItem) Focused() bool {
+	return mi.focused
+}
+
+// SetFocused sets whether the menu item currently has focus.
+func (mi *MenuItem) SetFocused(f bool) *MenuItem {
+	if mi.disabled && f {
+		return mi
+	}
+	if mi.focused != f {
+		mi.focused = f
+		mi.MarkDirty()
+	}
+	return mi
 }
 
 // Selected reports whether the menu item is currently selected/highlighted.
@@ -135,6 +150,9 @@ func (mi *MenuItem) Disabled() bool {
 func (mi *MenuItem) SetDisabled(dis bool) *MenuItem {
 	if mi.disabled != dis {
 		mi.disabled = dis
+		if dis && mi.focused {
+			mi.focused = false
+		}
 		mi.RequestLayout()
 		mi.MarkDirty()
 	}
@@ -203,7 +221,7 @@ func (mi *MenuItem) Submenu() []*MenuItem {
 	return out
 }
 
-// SetSubmenu configures child cascading submenu items, dynamically mounting them if already initialized.
+// SetSubmenu configures child cascading submenu items as an extensible data model.
 func (mi *MenuItem) SetSubmenu(submenu ...*MenuItem) *MenuItem {
 	var filtered []*MenuItem
 	for _, sub := range submenu {
@@ -211,16 +229,6 @@ func (mi *MenuItem) SetSubmenu(submenu ...*MenuItem) *MenuItem {
 			filtered = append(filtered, sub)
 		}
 	}
-
-	if ctx := mi.Context(); ctx != nil {
-		for _, old := range mi.submenu {
-			ctx.Unmount(old)
-		}
-		for _, sub := range filtered {
-			ctx.Mount(sub)
-		}
-	}
-
 	mi.submenu = filtered
 	mi.RequestLayout()
 	mi.MarkDirty()
@@ -283,8 +291,9 @@ func (mi *MenuItem) Render(s tui.Surface) {
 
 // RenderAt paints the menu item row on the surface at coordinates (x, y) with the given width.
 func (mi *MenuItem) RenderAt(s tui.Surface, x, y, width int) {
-	st := mi.MenuStyle().ItemStyle(mi.selected)
-	accSt := mi.MenuStyle().AccentStyle(mi.selected)
+	highlighted := (mi.selected || mi.focused) && !mi.disabled
+	st := mi.MenuStyle().ItemStyle(highlighted)
+	accSt := mi.MenuStyle().AccentStyle(highlighted)
 
 	if mi.disabled {
 		st = st.Faint(true)
@@ -329,27 +338,32 @@ func (mi *MenuItem) RenderAt(s tui.Surface, x, y, width int) {
 	}
 }
 
-// HandleEvent processes keyboard activation and hotkey mnemonic matching.
+// HandleEvent processes framework focus events, keyboard activation, and hotkey mnemonic matching.
 func (mi *MenuItem) HandleEvent(ev tui.Event) bool {
-	if mi.disabled {
-		return false
-	}
-	ke, ok := ev.(tui.KeyEvent)
-	if !ok || ke.Kind != tui.KeyPress {
-		return false
-	}
+	switch e := ev.(type) {
+	case tui.FocusEvent:
+		if !e.Terminal {
+			mi.focused = e.Gained && !mi.disabled
+			mi.MarkDirty()
+			return false // Bubble up to ancestor
+		}
+	case tui.KeyEvent:
+		if mi.disabled || e.Kind != tui.KeyPress {
+			return false
+		}
 
-	if mi.selected {
-		if ke.Code == tui.KeyEnter || ke.Code == ' ' {
+		if mi.focused || mi.selected {
+			if e.Code == tui.KeyEnter || e.Code == ' ' {
+				mi.Trigger()
+				return true
+			}
+		}
+
+		// Match hotkey mnemonic
+		if mi.Hotkey != 0 && unicode.ToLower(rune(e.Code)) == unicode.ToLower(mi.Hotkey) {
 			mi.Trigger()
 			return true
 		}
-	}
-
-	// Match hotkey mnemonic
-	if mi.Hotkey != 0 && unicode.ToLower(rune(ke.Code)) == unicode.ToLower(mi.Hotkey) {
-		mi.Trigger()
-		return true
 	}
 
 	return false

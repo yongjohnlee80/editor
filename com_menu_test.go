@@ -190,7 +190,7 @@ func TestMenuBar_ModalExit_Flow(t *testing.T) {
 
 	// 2. Test Exit canceled with Escape
 	quitCalled = false
-	tm.openExitModal(nil)
+	tm.OpenExitModal(nil)
 	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEscape})
 	if tm.ModalActive() {
 		t.Errorf("modal must be inactive after Escape")
@@ -200,7 +200,7 @@ func TestMenuBar_ModalExit_Flow(t *testing.T) {
 	}
 
 	// 3. Test Exit toggled to No and confirmed
-	tm.openExitModal(nil)
+	tm.OpenExitModal(nil)
 	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyRight}) // toggle to No
 	if tm.ActiveModal().SelectedButton() != 1 {
 		t.Errorf("selected button = %d, want 1 (No)", tm.ActiveModal().SelectedButton())
@@ -215,12 +215,34 @@ func TestMenuBar_ModalExit_Flow(t *testing.T) {
 }
 
 func TestMenuBar_CascadingSubmenuKeymaps_Flow(t *testing.T) {
-	var switchedKeyset widget.Keyset
+	var switchedKeymap string
 	var statusMsg string
-	tm := newTopMenu(TopMenuCallbacks{
-		OnSetKeyset: func(ks widget.Keyset) {
-			switchedKeyset = ks
+
+	var vimItem, nanoItem *MenuItem
+	vimItem = NewCheckableMenuItem("1. Vim  (modal)", '1', 0, true, func() {
+		switchedKeymap = "Vim"
+		statusMsg = "switched keymap to Vim (modal)"
+		vimItem.SetChecked(true)
+		nanoItem.SetChecked(false)
+	})
+	nanoItem = NewCheckableMenuItem("2. Nano (modeless)", '2', 0, false, func() {
+		switchedKeymap = "Nano"
+		statusMsg = "switched keymap to Nano (modeless)"
+		nanoItem.SetChecked(true)
+		vimItem.SetChecked(false)
+	})
+
+	cats := []MenuCategory{
+		{
+			Name:      "Option",
+			Hotkey:    'o',
+			HotkeyIdx: 0,
+			Items: []*MenuItem{
+				NewMenuItemWithSubmenu("Keymaps", 'k', 0, vimItem, nanoItem),
+			},
 		},
+	}
+	tm := NewTopMenu(cats, TopMenuCallbacks{
 		OnStatusMessage: func(msg string) {
 			statusMsg = msg
 		},
@@ -229,7 +251,7 @@ func TestMenuBar_CascadingSubmenuKeymaps_Flow(t *testing.T) {
 
 	// Navigate to Option -> Keymaps using Alt+o shortcut
 	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: 'o', Mods: tui.ModAlt})
-	if !tm.DropdownOpen() || tm.selectedCategory != 1 {
+	if !tm.DropdownOpen() || tm.selectedCategory != 0 {
 		t.Fatalf("Alt+o must open Option dropdown: dropdownOpen=%v, cat=%d", tm.DropdownOpen(), tm.selectedCategory)
 	}
 
@@ -241,8 +263,8 @@ func TestMenuBar_CascadingSubmenuKeymaps_Flow(t *testing.T) {
 
 	// Select Nano using shortcut '2'
 	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: '2'})
-	if switchedKeyset != widget.KeysetNano {
-		t.Errorf("switchedKeyset = %v, want KeysetNano", switchedKeyset)
+	if switchedKeymap != "Nano" {
+		t.Errorf("switchedKeymap = %v, want Nano", switchedKeymap)
 	}
 	if statusMsg == "" {
 		t.Error("status message should be set on keymap switch")
@@ -258,8 +280,8 @@ func TestMenuBar_CascadingSubmenuKeymaps_Flow(t *testing.T) {
 		t.Fatal("Right arrow must open cascading submenu")
 	}
 	mb.HandleEvent(tui.KeyEvent{Kind: tui.KeyPress, Code: '1'})
-	if switchedKeyset != widget.KeysetVim {
-		t.Errorf("switchedKeyset = %v, want KeysetVim", switchedKeyset)
+	if switchedKeymap != "Vim" {
+		t.Errorf("switchedKeymap = %v, want Vim", switchedKeymap)
 	}
 }
 
@@ -272,12 +294,13 @@ func TestMenuBar_ArbitrarySubmenuDepth(t *testing.T) {
 	level1 := NewMenuItemWithSubmenu("Level 1", '1', 6, level2)
 
 	tm := newTopMenu(TopMenuCallbacks{})
-	tm.categories = append(tm.categories, MenuCategory{
+	cats := append(tm.Categories(), MenuCategory{
 		Name:      "Deep",
 		Hotkey:    'd',
 		HotkeyIdx: 0,
 		Items:     []*MenuItem{level1},
 	})
+	tm.SetCategories(cats)
 	mb := tm.Bar()
 
 	// Open Deep menu (cat 3)
@@ -310,8 +333,8 @@ func TestMenuBar_ArbitrarySubmenuDepth(t *testing.T) {
 
 func TestMenuBar_DynamicCategoriesRendering(t *testing.T) {
 	tm := newTopMenu(TopMenuCallbacks{})
-	// Add 4th category
-	tm.categories = append(tm.categories, MenuCategory{
+	// Add 4th category using public SetCategories API
+	cats := append(tm.Categories(), MenuCategory{
 		Name:      "Tools",
 		Hotkey:    't',
 		HotkeyIdx: 0,
@@ -319,6 +342,7 @@ func TestMenuBar_DynamicCategoriesRendering(t *testing.T) {
 			NewMenuItem("Linter", 'l', 0, nil),
 		},
 	})
+	tm.SetCategories(cats)
 
 	surf := newMockSurface(80, 1)
 	tm.Bar().Render(surf)

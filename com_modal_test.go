@@ -125,9 +125,13 @@ func TestModal_StandaloneWidget(t *testing.T) {
 		t.Fatal("modal.Buttons() must return a defensive copy")
 	}
 
-	// AcceptsFocus and Layout
-	if !modal.AcceptsFocus() {
-		t.Fatal("AcceptsFocus() should return true")
+	// AcceptsFocus: false when buttons exist, true when empty
+	if modal.AcceptsFocus() {
+		t.Fatal("AcceptsFocus() should return false when modal has buttons")
+	}
+	emptyModal := NewModal("Empty", "Body")
+	if !emptyModal.AcceptsFocus() {
+		t.Fatal("AcceptsFocus() should return true when modal has no buttons")
 	}
 	sz := modal.Layout(tui.Constraints{MaxW: 80, MaxH: 24})
 	if sz.W != 80 || sz.H != 24 {
