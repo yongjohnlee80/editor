@@ -23,10 +23,10 @@ To address this, the command architecture separates four primary responsibilitie
 | Concern | File | Responsibility |
 |---|---|---|
 | **Interface & Type Declarations** | [`commands.go`](../commands.go) | `CommandStatus`, `CommandResponse[R]`, `Command[R]`, `Handler` |
-| **Response Implementations** | [`commands-response.go`](../commands-response.go) | `Response[R]`, constructors (`Ok`, `Prompt`, `Refuse`), `Register[R]` |
-| **Registry & Dispatch** | [`commands-registry.go`](../commands-registry.go) | Verb-to-handler lookup, command line parsing, dispatch loop |
+| **Response Implementations** | [`commands_response.go`](../commands_response.go) | `Response[R]`, constructors (`Ok`, `Prompt`, `Refuse`), `Register[R]` |
+| **Registry & Dispatch** | [`commands_registry.go`](../commands_registry.go) | Verb-to-handler lookup, command line parsing, dispatch loop |
 | **Buffer Abstraction** | [`document.go`](../document.go) | `Document` interface (decoupled from widgets) |
-| **Domain/OS Implementations** | [`commands-os.go`](../commands-os.go) | Base I/O (`readInto`, `writeFrom`), `NewReadFileCmd`, `NewWriteFileCmd`, `InitOSCommands` |
+| **Domain/OS Implementations** | [`commands_os.go`](../commands_os.go) | Base I/O (`readInto`, `writeFrom`), `NewReadFileCmd`, `NewWriteFileCmd`, `InitOSCommands` |
 
 ---
 
@@ -116,7 +116,7 @@ Contains only abstract types and contracts:
 - `Command[R any]`
 - `Handler` struct declaration
 
-### In `commands-response.go`
+### In `commands_response.go`
 Contains concrete struct definitions, method implementations, and constructor helpers:
 - `Response[R any]` (implements `CommandResponse[R]`)
 - `Ok[R]`, `Prompt`, `Refuse[R]` constructors
@@ -141,7 +141,7 @@ Any widget (`EditorPane`), scratch buffer, or mock can implement `Document` with
 
 ## 4. The Registry Pattern
 
-The `Registry` (`commands-registry.go`) manages command verbs and aliases:
+The `Registry` (`commands_registry.go`) manages command verbs and aliases:
 
 ```go
 reg := NewRegistry()
@@ -162,7 +162,7 @@ resp := reg.Dispatch(ctx, ":w notes.txt")
 
 ---
 
-## 5. Layered OS Command Implementation (`commands-os.go`)
+## 5. Layered OS Command Implementation (`commands_os.go`)
 
 File operations demonstrate a two-tier testing and execution pattern:
 

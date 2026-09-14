@@ -19,7 +19,7 @@ import (
 // wiring is actually observed rather than assumed.
 //
 // Tests that belong to the document layer (file loading, write, dirty flag)
-// live in com-editor_test.go and call newEditorPane directly, keeping this
+// live in com_editor_test.go and call newEditorPane directly, keeping this
 // file focused on App orchestration: the command lifecycle, key routing,
 // footer behaviour, and status bar.
 

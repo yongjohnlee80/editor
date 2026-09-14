@@ -4,7 +4,7 @@
 **Date:** 2026-09-09  
 **Reviewer:** Lector  
 **Status:** Implemented & Superseded by Floating Command Line in EditorPane & Menu Subsystem (2026-09-13)
-**Related Components:** `App`, `EditorPane`, `Footer`, `TopMenu`, `handler-keyboard.go`
+**Related Components:** `App`, `EditorPane`, `Footer`, `TopMenu`, `handler_keyboard.go`
 
 ---
 
@@ -86,13 +86,13 @@ Because leaf widgets run first:
 Each component (`EditorPane`, `Footer`, `MenuBar`) embeds its own ad-hoc key comparisons and invokes arbitrary callbacks.
 - **Flaws**: Violates DRY by duplicating key normalization and chord matching; scatters keybinding definitions across components.
 
-### Approach B: Heavy Centralized Controller (`handler-keyboard.go` as Second Root)
+### Approach B: Heavy Centralized Controller (`handler_keyboard.go` as Second Root)
 A stateful `KeyboardHandler` service that holds references to `App`, `EditorPane`, and `MenuBar`, inspecting UI state and performing focus/visibility mutations.
 - **Flaws**: Violates SRP and DIP by creating a second root controller under a different name, introducing duplicate state tracking and tight coupling.
 
 ### Approach C: Hybrid Boundary (Implemented Architecture)
 A **pure shared resolver** coupled with **component-local capture** and **synchronous action sinks**:
-1. **`handler-keyboard.go`** is a **pure resolver**: defines `InputScope`, `KeyAction`, normalization, and `Resolve(InputScope, tui.KeyEvent) (KeyAction, bool)`. It holds **zero mutable UI state**, no component pointers, and no focus logic.
+1. **`handler_keyboard.go`** is a **pure resolver**: defines `InputScope`, `KeyAction`, normalization, and `Resolve(InputScope, tui.KeyEvent) (KeyAction, bool)`. It holds **zero mutable UI state**, no component pointers, and no focus logic.
 2. **`EditorPane`** receives a `KeyResolver` and a synchronous `KeyActionSink`:
    - Sees keys unconsumed by `widget.Editor`, checks its live Normal mode, resolves under `ScopeEditorNormal`, and emits semantic actions (e.g. `ActionOpenCommandLine`, `ActionOpenMenuFile`).
    - Sees keys unconsumed by `widget.TextInput`, resolves under `ScopeCommandLine`, and emits `ActionCancelCommandLine` or menu actions.
@@ -103,7 +103,7 @@ A **pure shared resolver** coupled with **component-local capture** and **synchr
 
 ## 4. Detailed Design Specification
 
-### 4.1 Type System (`handler-keyboard.go`)
+### 4.1 Type System (`handler_keyboard.go`)
 
 ```go
 package editor
@@ -238,13 +238,13 @@ A direct `KeyActionSink` function provides a synchronous, single-owner contract 
 ## 5. Summary of SOLID & DRY Alignment
 
 - **Single Responsibility Principle (SRP)**:
-  - `handler-keyboard.go` owns binding definition, normalization, and resolution.
+  - `handler_keyboard.go` owns binding definition, normalization, and resolution.
   - `EditorPane` & `Footer` own local ancestor event filtering.
   - `App` owns cross-component layout, focus, and lifecycle coordination.
 - **Open/Closed Principle (OCP)**: New actions or scopes can be added to the resolver without changing how components capture events.
 - **Liskov Substitution & Interface Segregation (ISP)**: Components depend solely on the minimal `KeyResolver` interface and `KeyActionSink` func.
 - **Dependency Inversion (DIP)**: Neither `EditorPane` nor `Footer` imports or references `*App`.
-- **DRY**: Binding tables and key matching logic are declared once in `handler-keyboard.go`.
+- **DRY**: Binding tables and key matching logic are declared once in `handler_keyboard.go`.
 
 ---
 *End of Revised Proposal.*
