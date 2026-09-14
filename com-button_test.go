@@ -205,7 +205,10 @@ func TestButton_AppLifecycleAndFocusActivation(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	// In real App, the framework focus manager automatically focuses the root Focusable component.
+	// In real App, press Tab to focus the first focusable component in the App:
+	tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyTab})
+	time.Sleep(50 * time.Millisecond)
+
 	// Inject Enter via TestBackend without any manual SetFocused call:
 	tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
 	time.Sleep(50 * time.Millisecond)
