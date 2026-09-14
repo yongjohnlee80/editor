@@ -466,7 +466,7 @@ func TestMenuOverlay_Layout(t *testing.T) {
 
 	// When modal is active, layout spans full area
 	tm.dropdownOpen = false
-	tm.openExitModal(nil)
+	tm.OpenExitModal(nil)
 	sz = mo.Layout(tui.Constraints{MinW: 0, MaxW: 80, MinH: 0, MaxH: 24})
 	if sz.W != 80 || sz.H != 24 {
 		t.Errorf("modal overlay sz = %+v, want (80, 24)", sz)
