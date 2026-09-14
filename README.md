@@ -83,10 +83,12 @@ Option categories on the left, and Help pegged to the right (when docked horizon
   offering `1. Vim (modal)` and `2. Nano (modeless)`, allowing live runtime keyset switching.
 - **Modals**: Selecting `File -> Exit` opens an "Are you sure to quit?" confirmation modal.
   Unimplemented items display an informative "Not Implemented" modal dialog.
-- **Standalone Widget Architecture (ADR 0098)**: Menu bars, dropdowns, and dialogs are built
-  from decoupled primitives (`Button`, `Modal`, `MenuItem`, `MenuBar`) designed for upstream
-  extraction into `golib/tui/widget`. Modals act as `tui.FocusScope` focus traps with automatic
-  prior-focus restoration; children are framework-mounted with distinct `NodeID` identities.
+- **Behavioral Prototype Widget Architecture (ADR 0098)**: Menu bars, dropdowns, and dialogs are built
+  from decoupled primitives (`Button`, `Modal`, `MenuItem`, `MenuBar`) serving as behavioral prototypes
+  for upstream extraction into `golib/tui/widget`. Modals act as `tui.FocusScope` focus traps with
+  automatic prior-focus restoration; child buttons are framework-mounted with distinct `NodeID` identities.
+  Keyboard and mnemonic navigation are fully supported; mouse click gestures and pane resizing are specified
+  in ADR 0098 for upstream implementation.
 - **Configurable Placement**: The menu bar can be docked along any screen edge: `"top"`,
   `"bottom"`, `"left"`, or `"right"`. When placed on the left or right, it renders as a
   vertical navigation sidebar with selection highlights mirroring autodb's explorer panel.

@@ -20,9 +20,10 @@ const (
 	ButtonRoleCancel
 )
 
-// Button is a standalone clickable/focusable button widget component.
+// Button is a standalone focusable button widget component.
 // It encapsulates a label, an action callback, disabled state, semantic role,
 // mnemonic hotkey, and component-level styles for normal, focused, and disabled states.
+// Keyboard activation occurs on Enter/Space when focused.
 type Button struct {
 	widget.Base
 
@@ -207,7 +208,7 @@ func (b *Button) HandleEvent(ev tui.Event) bool {
 		if !e.Terminal {
 			b.focused = e.Gained && !b.disabled
 			b.MarkDirty()
-			return true
+			return false // Allow FocusEvent to bubble to ancestors
 		}
 	case tui.KeyEvent:
 		if !b.focused || b.disabled {

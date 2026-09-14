@@ -52,12 +52,8 @@ func New(cfg Config, path string, quit func()) (*App, error) {
 
 	// menu manages the top-level Borland-style menu bar (File, Option, Help),
 	// dropdowns, and modals.
-	a.menu = newTopMenu(TopMenuCallbacks{
+	a.menu = NewTopMenu(nil, TopMenuCallbacks{
 		OnQuit: a.quit,
-		OnSetKeyset: func(ks widget.Keyset) {
-			a.editorPane.SetKeyset(ks)
-			a.refresh()
-		},
 		OnStatusMessage: func(msg string) {
 			a.setMessage(msg)
 		},
@@ -65,6 +61,7 @@ func New(cfg Config, path string, quit func()) (*App, error) {
 			a.editorPane.FocusActive()
 		},
 	}, resolver)
+	a.menu.SetCategories(a.buildEditorMenuCategories())
 
 	// dock is the top-level layout container. It describes the screen from
 	// the outside in:
@@ -390,4 +387,63 @@ func (a *App) refresh() {
 	timeStr := time.Now().Format("15:04:05") + " "
 	a.footer.SetStatus(modeStr, centre, timeStr)
 	a.ctx.MarkDirty()
+}
+
+func (a *App) buildEditorMenuCategories() []MenuCategory {
+	var vimItem, nanoItem *MenuItem
+	vimItem = NewCheckableMenuItem("1. Vim  (modal)", '1', 0, a.editorPane.Keyset() == widget.KeysetVim, func() {
+		a.editorPane.SetKeyset(widget.KeysetVim)
+		vimItem.SetChecked(true)
+		nanoItem.SetChecked(false)
+		a.setMessage("switched keymap to Vim (modal)")
+		a.menu.Deactivate(a.ctx)
+	})
+	nanoItem = NewCheckableMenuItem("2. Nano (modeless)", '2', 0, a.editorPane.Keyset() == widget.KeysetNano, func() {
+		a.editorPane.SetKeyset(widget.KeysetNano)
+		nanoItem.SetChecked(true)
+		vimItem.SetChecked(false)
+		a.setMessage("switched keymap to Nano (modeless)")
+		a.menu.Deactivate(a.ctx)
+	})
+
+	return []MenuCategory{
+		{
+			Name:      "File",
+			Hotkey:    'f',
+			HotkeyIdx: 0,
+			Items: []*MenuItem{
+				NewMenuItem("New", 'n', 0, func() {
+					a.menu.OpenNotImplemented("File -> New", a.ctx)
+				}),
+				NewMenuItem("Open", 'o', 0, func() {
+					a.menu.OpenNotImplemented("File -> Open", a.ctx)
+				}),
+				NewMenuItem("Save", 's', 0, func() {
+					a.menu.OpenNotImplemented("File -> Save", a.ctx)
+				}),
+				NewMenuItem("Exit", 'x', 1, func() {
+					a.menu.OpenExitModal(a.ctx)
+				}),
+			},
+		},
+		{
+			Name:      "Option",
+			Hotkey:    'o',
+			HotkeyIdx: 0,
+			Items: []*MenuItem{
+				NewMenuItemWithSubmenu("Keymaps", 'k', 0, vimItem, nanoItem),
+			},
+		},
+		{
+			Name:      "Help",
+			Hotkey:    'h',
+			HotkeyIdx: 0,
+			RightPeg:  true,
+			Items: []*MenuItem{
+				NewMenuItem("About", 'a', 0, func() {
+					a.menu.OpenNotImplemented("Help -> About", a.ctx)
+				}),
+			},
+		},
+	}
 }

@@ -6,7 +6,6 @@ import (
 
 	"github.com/yongjohnlee80/golib/tui"
 	"github.com/yongjohnlee80/golib/tui/style"
-	"github.com/yongjohnlee80/golib/tui/widget"
 )
 
 // MenuPlacement configures where the menu bar is docked within the application.
@@ -21,8 +20,10 @@ const (
 
 // MenuCategory represents a top-level category on the menu bar (e.g. File, Option, Help).
 type MenuCategory struct {
-	Name      string
-	Hotkey    rune
+	Name string
+	// Hotkey is the mnemonic rune character for category activation.
+	Hotkey rune
+	// HotkeyIdx is the 0-based grapheme index within Name of the mnemonic character to highlight.
 	HotkeyIdx int
 	RightPeg  bool
 	Items     []*MenuItem
@@ -31,7 +32,6 @@ type MenuCategory struct {
 // TopMenuCallbacks holds the external actions triggered by menu items and modals.
 type TopMenuCallbacks struct {
 	OnQuit          func()
-	OnSetKeyset     func(widget.Keyset)
 	OnStatusMessage func(string)
 	OnRestoreFocus  func()
 }
@@ -70,8 +70,6 @@ type TopMenu struct {
 	// Active modal dialog
 	activeModal *Modal
 
-	currentKeyset widget.Keyset
-
 	bar     *MenuBar
 	overlay *MenuOverlay
 
@@ -80,8 +78,24 @@ type TopMenu struct {
 	resolver KeyResolver
 }
 
-// newTopMenu constructs the TopMenu subsystem with its categories and child components.
-func newTopMenu(cb TopMenuCallbacks, resolver ...KeyResolver) *TopMenu {
+func sanitizeCategories(cats []MenuCategory) []MenuCategory {
+	out := make([]MenuCategory, 0, len(cats))
+	for _, c := range cats {
+		cleanItems := make([]*MenuItem, 0, len(c.Items))
+		for _, it := range c.Items {
+			if it != nil {
+				cleanItems = append(cleanItems, it)
+			}
+		}
+		c.Items = cleanItems
+		out = append(out, c)
+	}
+	return out
+}
+
+// NewTopMenu constructs a generic, application-neutral TopMenu subsystem with caller-supplied
+// categories and optional external callbacks and key resolver.
+func NewTopMenu(categories []MenuCategory, cb TopMenuCallbacks, resolver ...KeyResolver) *TopMenu {
 	var res KeyResolver
 	if len(resolver) > 0 && resolver[0] != nil {
 		res = resolver[0]
@@ -89,29 +103,83 @@ func newTopMenu(cb TopMenuCallbacks, resolver ...KeyResolver) *TopMenu {
 		res = NewDefaultKeyResolver(" ")
 	}
 	tm := &TopMenu{
-		cb:            cb,
-		resolver:      res,
-		placement:     PlacementTop,
-		currentKeyset: widget.KeysetVim,
+		cb:         cb,
+		resolver:   res,
+		placement:  PlacementTop,
+		categories: sanitizeCategories(categories),
 	}
+	tm.bar = &MenuBar{menu: tm}
+	tm.overlay = &MenuOverlay{menu: tm}
+	tm.selectedItem = tm.firstEnabledItem(tm.selectedCategory)
+	tm.syncItemSelection()
+	return tm
+}
 
-	tm.categories = []MenuCategory{
+// Categories returns a defensive copy of the configured menu categories.
+func (tm *TopMenu) Categories() []MenuCategory {
+	out := make([]MenuCategory, len(tm.categories))
+	for i, c := range tm.categories {
+		itemsCopy := make([]*MenuItem, len(c.Items))
+		copy(itemsCopy, c.Items)
+		c.Items = itemsCopy
+		out[i] = c
+	}
+	return out
+}
+
+// SetCategories updates the configured menu categories, filtering nils and invalidating layout.
+func (tm *TopMenu) SetCategories(categories []MenuCategory) {
+	tm.categories = sanitizeCategories(categories)
+	if tm.selectedCategory >= len(tm.categories) {
+		tm.selectedCategory = max(0, len(tm.categories)-1)
+	}
+	tm.selectedItem = tm.firstEnabledItem(tm.selectedCategory)
+	tm.syncItemSelection()
+	if tm.bar != nil && tm.bar.ctx != nil {
+		tm.bar.ctx.RequestLayout()
+		tm.bar.ctx.MarkDirty()
+	}
+	if tm.overlay != nil && tm.overlay.ctx != nil {
+		tm.overlay.ctx.RequestLayout()
+		tm.overlay.ctx.MarkDirty()
+	}
+}
+
+// DefaultMenuCategories constructs the default File, Option, Help categories for the editor.
+func DefaultMenuCategories(tm *TopMenu, cb TopMenuCallbacks) []MenuCategory {
+	var vimItem, nanoItem *MenuItem
+	vimItem = NewCheckableMenuItem("1. Vim  (modal)", '1', 0, true, func() {
+		vimItem.SetChecked(true)
+		nanoItem.SetChecked(false)
+		if cb.OnStatusMessage != nil {
+			cb.OnStatusMessage("switched keymap to Vim (modal)")
+		}
+	})
+	nanoItem = NewCheckableMenuItem("2. Nano (modeless)", '2', 0, false, func() {
+		nanoItem.SetChecked(true)
+		vimItem.SetChecked(false)
+		if cb.OnStatusMessage != nil {
+			cb.OnStatusMessage("switched keymap to Nano (modeless)")
+		}
+	})
+
+	return []MenuCategory{
 		{
 			Name:      "File",
 			Hotkey:    'f',
 			HotkeyIdx: 0,
 			Items: []*MenuItem{
 				NewMenuItem("New", 'n', 0, func() {
-					tm.openNotImplemented("File -> New", nil)
+					tm.OpenNotImplemented("File -> New", nil)
 				}),
 				NewMenuItem("Open", 'o', 0, func() {
-					tm.openNotImplemented("File -> Open", nil)
+					tm.OpenNotImplemented("File -> Open", nil)
 				}),
 				NewMenuItem("Save", 's', 0, func() {
-					tm.openNotImplemented("File -> Save", nil)
+					tm.OpenNotImplemented("File -> Save", nil)
 				}),
 				NewMenuItem("Exit", 'x', 1, func() {
-					tm.openExitModal(nil)
+					tm.OpenExitModal(nil)
 				}),
 			},
 		},
@@ -120,14 +188,7 @@ func newTopMenu(cb TopMenuCallbacks, resolver ...KeyResolver) *TopMenu {
 			Hotkey:    'o',
 			HotkeyIdx: 0,
 			Items: []*MenuItem{
-				NewMenuItemWithSubmenu("Keymaps", 'k', 0,
-					NewCheckableMenuItem("1. Vim  (modal)", '1', 0, true, func() {
-						tm.commitKeymap(widget.KeysetVim, nil)
-					}),
-					NewCheckableMenuItem("2. Nano (modeless)", '2', 0, false, func() {
-						tm.commitKeymap(widget.KeysetNano, nil)
-					}),
-				),
+				NewMenuItemWithSubmenu("Keymaps", 'k', 0, vimItem, nanoItem),
 			},
 		},
 		{
@@ -137,14 +198,17 @@ func newTopMenu(cb TopMenuCallbacks, resolver ...KeyResolver) *TopMenu {
 			RightPeg:  true,
 			Items: []*MenuItem{
 				NewMenuItem("About", 'a', 0, func() {
-					tm.openNotImplemented("Help -> About", nil)
+					tm.OpenNotImplemented("Help -> About", nil)
 				}),
 			},
 		},
 	}
+}
 
-	tm.bar = &MenuBar{menu: tm}
-	tm.overlay = &MenuOverlay{menu: tm}
+// newTopMenu constructs the TopMenu subsystem with default editor categories.
+func newTopMenu(cb TopMenuCallbacks, resolver ...KeyResolver) *TopMenu {
+	tm := NewTopMenu(nil, cb, resolver...)
+	tm.SetCategories(DefaultMenuCategories(tm, cb))
 	return tm
 }
 
@@ -230,8 +294,10 @@ func (tm *TopMenu) Activate(ctx *tui.Context) {
 	tm.active = true
 	tm.selectedCategory = 0
 	tm.dropdownOpen = false
+	tm.selectedItem = tm.firstEnabledItem(0)
 	tm.submenuStack = nil
 	tm.activeModal = nil
+	tm.syncItemSelection()
 	if ctx != nil {
 		ctx.FocusComponent(tm.bar)
 		ctx.RequestLayout()
@@ -251,9 +317,10 @@ func (tm *TopMenu) OpenCategory(catIdx int, ctx *tui.Context) {
 	tm.active = true
 	tm.selectedCategory = catIdx
 	tm.dropdownOpen = true
-	tm.selectedItem = 0
+	tm.selectedItem = tm.firstEnabledItem(catIdx)
 	tm.submenuStack = nil
 	tm.activeModal = nil
+	tm.syncItemSelection()
 	if ctx != nil {
 		ctx.FocusComponent(tm.bar)
 		ctx.RequestLayout()
@@ -268,17 +335,13 @@ func (tm *TopMenu) OpenCategory(catIdx int, ctx *tui.Context) {
 // Deactivate closes the menu bar and restores focus to the editor.
 func (tm *TopMenu) Deactivate(ctx *tui.Context) {
 	if tm.activeModal != nil {
-		if ctx != nil {
-			ctx.Unmount(tm.activeModal)
-		} else if tm.overlay != nil && tm.overlay.ctx != nil {
-			tm.overlay.ctx.Unmount(tm.activeModal)
-		}
-		tm.activeModal = nil
+		tm.CloseModal(ctx)
 	}
 
 	tm.active = false
 	tm.dropdownOpen = false
 	tm.submenuStack = nil
+	tm.syncItemSelection()
 
 	if ctx != nil {
 		ctx.RequestLayout()
@@ -302,6 +365,124 @@ func (tm *TopMenu) Toggle(ctx *tui.Context) {
 	}
 }
 
+func (tm *TopMenu) firstEnabledItem(catIdx int) int {
+	if catIdx < 0 || catIdx >= len(tm.categories) {
+		return -1
+	}
+	for i, it := range tm.categories[catIdx].Items {
+		if it != nil && !it.Disabled() {
+			return i
+		}
+	}
+	return -1
+}
+
+func (tm *TopMenu) syncItemSelection() {
+	for cIdx, cat := range tm.categories {
+		for iIdx, it := range cat.Items {
+			if it == nil {
+				continue
+			}
+			isSel := tm.dropdownOpen && cIdx == tm.selectedCategory && iIdx == tm.selectedItem && len(tm.submenuStack) == 0
+			it.SetSelected(isSel)
+		}
+	}
+	for lvlIdx, lvl := range tm.submenuStack {
+		isTop := (lvlIdx == len(tm.submenuStack)-1)
+		for j, subIt := range lvl.items {
+			if subIt == nil {
+				continue
+			}
+			isSel := isTop && j == lvl.sel
+			subIt.SetSelected(isSel)
+		}
+	}
+}
+
+func (tm *TopMenu) selectNextItem() {
+	if tm.selectedCategory < 0 || tm.selectedCategory >= len(tm.categories) {
+		return
+	}
+	cat := tm.categories[tm.selectedCategory]
+	n := len(cat.Items)
+	if n <= 1 {
+		return
+	}
+	start := tm.selectedItem
+	if start < 0 {
+		start = 0
+	}
+	for step := 1; step < n; step++ {
+		idx := (start + step) % n
+		if cat.Items[idx] != nil && !cat.Items[idx].Disabled() {
+			tm.selectedItem = idx
+			tm.syncItemSelection()
+			return
+		}
+	}
+}
+
+func (tm *TopMenu) selectPrevItem() {
+	if tm.selectedCategory < 0 || tm.selectedCategory >= len(tm.categories) {
+		return
+	}
+	cat := tm.categories[tm.selectedCategory]
+	n := len(cat.Items)
+	if n <= 1 {
+		return
+	}
+	start := tm.selectedItem
+	if start < 0 {
+		start = 0
+	}
+	for step := 1; step < n; step++ {
+		idx := (start - step + n) % n
+		if cat.Items[idx] != nil && !cat.Items[idx].Disabled() {
+			tm.selectedItem = idx
+			tm.syncItemSelection()
+			return
+		}
+	}
+}
+
+func (tm *TopMenu) selectNextSubmenuItem(lvl *submenuLevel) {
+	n := len(lvl.items)
+	if n <= 1 {
+		return
+	}
+	start := lvl.sel
+	if start < 0 {
+		start = 0
+	}
+	for step := 1; step < n; step++ {
+		idx := (start + step) % n
+		if lvl.items[idx] != nil && !lvl.items[idx].Disabled() {
+			lvl.sel = idx
+			tm.syncItemSelection()
+			return
+		}
+	}
+}
+
+func (tm *TopMenu) selectPrevSubmenuItem(lvl *submenuLevel) {
+	n := len(lvl.items)
+	if n <= 1 {
+		return
+	}
+	start := lvl.sel
+	if start < 0 {
+		start = 0
+	}
+	for step := 1; step < n; step++ {
+		idx := (start - step + n) % n
+		if lvl.items[idx] != nil && !lvl.items[idx].Disabled() {
+			lvl.sel = idx
+			tm.syncItemSelection()
+			return
+		}
+	}
+}
+
 func (tm *TopMenu) openSubmenu(ctx *tui.Context) bool {
 	var currentItem *MenuItem
 	if len(tm.submenuStack) == 0 {
@@ -321,16 +502,26 @@ func (tm *TopMenu) openSubmenu(ctx *tui.Context) bool {
 		currentItem = top.items[top.sel]
 	}
 
-	if currentItem == nil || !currentItem.HasSubmenu() {
+	if currentItem == nil || currentItem.Disabled() || !currentItem.HasSubmenu() {
 		return false
+	}
+
+	subItems := currentItem.Submenu()
+	firstEnabled := -1
+	for i, subIt := range subItems {
+		if subIt != nil && !subIt.Disabled() {
+			firstEnabled = i
+			break
+		}
 	}
 
 	tm.submenuStack = append(tm.submenuStack, submenuLevel{
 		parent: currentItem,
-		items:  currentItem.Submenu(),
-		sel:    0,
+		items:  subItems,
+		sel:    firstEnabled,
 	})
 
+	tm.syncItemSelection()
 	if ctx != nil {
 		ctx.RequestLayout()
 		ctx.MarkDirty()
@@ -350,6 +541,9 @@ func (tm *TopMenu) executeItem(catIdx, itemIdx int, ctx *tui.Context) {
 		return
 	}
 	item := cat.Items[itemIdx]
+	if item == nil || item.Disabled() {
+		return // Inert on disabled items; keeps dropdown open
+	}
 
 	if item.HasSubmenu() {
 		tm.openSubmenu(ctx)
@@ -358,19 +552,54 @@ func (tm *TopMenu) executeItem(catIdx, itemIdx int, ctx *tui.Context) {
 
 	tm.dropdownOpen = false
 	tm.submenuStack = nil
+	tm.syncItemSelection()
 	item.Trigger()
 }
 
-func (tm *TopMenu) openExitModal(ctx *tui.Context) {
+// OpenModal displays a modal dialog on the overlay layer.
+func (tm *TopMenu) OpenModal(m *Modal, ctx *tui.Context) {
+	if m == nil {
+		return
+	}
+	if tm.activeModal != nil {
+		tm.CloseModal(ctx)
+	}
+	tm.activeModal = m
+	if tm.overlay != nil && tm.overlay.ctx != nil {
+		tm.overlay.ctx.Mount(m)
+		tm.overlay.ctx.RequestLayout()
+		tm.overlay.ctx.MarkDirty()
+	} else if ctx != nil {
+		ctx.Mount(m)
+		ctx.RequestLayout()
+		ctx.MarkDirty()
+	}
+}
+
+// CloseModal unmounts and closes the currently active modal dialog.
+func (tm *TopMenu) CloseModal(ctx *tui.Context) {
+	if tm.activeModal == nil {
+		return
+	}
+	if ctx != nil {
+		ctx.Unmount(tm.activeModal)
+	} else if tm.overlay != nil && tm.overlay.ctx != nil {
+		tm.overlay.ctx.Unmount(tm.activeModal)
+	}
+	tm.activeModal = nil
+	if ctx != nil {
+		ctx.RequestLayout()
+		ctx.MarkDirty()
+	} else if tm.overlay != nil && tm.overlay.ctx != nil {
+		tm.overlay.ctx.RequestLayout()
+		tm.overlay.ctx.MarkDirty()
+	}
+}
+
+// OpenExitModal displays the exit confirmation modal dialog.
+func (tm *TopMenu) OpenExitModal(ctx *tui.Context) {
 	btnYes := NewButton("Yes", func() {
-		if tm.activeModal != nil {
-			if ctx != nil {
-				ctx.Unmount(tm.activeModal)
-			} else if tm.overlay != nil && tm.overlay.ctx != nil {
-				tm.overlay.ctx.Unmount(tm.activeModal)
-			}
-			tm.activeModal = nil
-		}
+		tm.CloseModal(ctx)
 		tm.Deactivate(ctx)
 		if tm.cb.OnQuit != nil {
 			tm.cb.OnQuit()
@@ -378,109 +607,35 @@ func (tm *TopMenu) openExitModal(ctx *tui.Context) {
 	}).SetRole(ButtonRoleDefault).SetMnemonic('y')
 
 	btnNo := NewButton("No", func() {
-		if tm.activeModal != nil {
-			if ctx != nil {
-				ctx.Unmount(tm.activeModal)
-			} else if tm.overlay != nil && tm.overlay.ctx != nil {
-				tm.overlay.ctx.Unmount(tm.activeModal)
-			}
-			tm.activeModal = nil
-		}
+		tm.CloseModal(ctx)
 		tm.Deactivate(ctx)
 	}).SetRole(ButtonRoleCancel).SetMnemonic('n')
 
 	modal := NewModal("Exit Confirmation", "Are you sure to quit?", btnYes, btnNo)
 	modal.SetStyle(defaultModalStyle)
 	modal.OnDismiss(func() {
-		if tm.activeModal != nil {
-			if ctx != nil {
-				ctx.Unmount(tm.activeModal)
-			} else if tm.overlay != nil && tm.overlay.ctx != nil {
-				tm.overlay.ctx.Unmount(tm.activeModal)
-			}
-			tm.activeModal = nil
-		}
+		tm.CloseModal(ctx)
 		tm.Deactivate(ctx)
 	})
 
-	tm.activeModal = modal
-	if tm.overlay != nil && tm.overlay.ctx != nil {
-		tm.overlay.ctx.Mount(modal)
-		tm.overlay.ctx.RequestLayout()
-		tm.overlay.ctx.MarkDirty()
-	} else if ctx != nil {
-		ctx.Mount(modal)
-		ctx.RequestLayout()
-		ctx.MarkDirty()
-	}
+	tm.OpenModal(modal, ctx)
 }
 
-func (tm *TopMenu) openNotImplemented(msg string, ctx *tui.Context) {
+// OpenNotImplemented displays a not-implemented notification modal dialog.
+func (tm *TopMenu) OpenNotImplemented(msg string, ctx *tui.Context) {
 	btnOK := NewButton("OK", func() {
-		if tm.activeModal != nil {
-			if ctx != nil {
-				ctx.Unmount(tm.activeModal)
-			} else if tm.overlay != nil && tm.overlay.ctx != nil {
-				tm.overlay.ctx.Unmount(tm.activeModal)
-			}
-			tm.activeModal = nil
-		}
+		tm.CloseModal(ctx)
 		tm.Deactivate(ctx)
 	}).SetRole(ButtonRoleDefault).SetMnemonic('o')
 
 	modal := NewModal("Not Implemented", msg+" is not implemented yet.", btnOK)
 	modal.SetStyle(defaultModalStyle)
 	modal.OnDismiss(func() {
-		if tm.activeModal != nil {
-			if ctx != nil {
-				ctx.Unmount(tm.activeModal)
-			} else if tm.overlay != nil && tm.overlay.ctx != nil {
-				tm.overlay.ctx.Unmount(tm.activeModal)
-			}
-			tm.activeModal = nil
-		}
+		tm.CloseModal(ctx)
 		tm.Deactivate(ctx)
 	})
 
-	tm.activeModal = modal
-	if tm.overlay != nil && tm.overlay.ctx != nil {
-		tm.overlay.ctx.Mount(modal)
-		tm.overlay.ctx.RequestLayout()
-		tm.overlay.ctx.MarkDirty()
-	} else if ctx != nil {
-		ctx.Mount(modal)
-		ctx.RequestLayout()
-		ctx.MarkDirty()
-	}
-}
-
-func (tm *TopMenu) commitKeymap(ks widget.Keyset, ctx *tui.Context) {
-	tm.currentKeyset = ks
-
-	// Update checked state on matching checkable menu items
-	for _, cat := range tm.categories {
-		for _, it := range cat.Items {
-			for _, sub := range it.Submenu() {
-				if strings.Contains(sub.Name, "Vim") {
-					sub.SetChecked(ks == widget.KeysetVim)
-				} else if strings.Contains(sub.Name, "Nano") {
-					sub.SetChecked(ks == widget.KeysetNano)
-				}
-			}
-		}
-	}
-
-	if tm.cb.OnSetKeyset != nil {
-		tm.cb.OnSetKeyset(ks)
-	}
-	if tm.cb.OnStatusMessage != nil {
-		if ks == widget.KeysetNano {
-			tm.cb.OnStatusMessage("switched keymap to Nano (modeless)")
-		} else {
-			tm.cb.OnStatusMessage("switched keymap to Vim (modal)")
-		}
-	}
-	tm.Deactivate(ctx)
+	tm.OpenModal(modal, ctx)
 }
 
 // MenuBar is the docked menu strip (horizontal on Top/Bottom, vertical on Left/Right).
@@ -723,26 +878,39 @@ func (mb *MenuBar) handleBarKey(ke tui.KeyEvent, ctx *tui.Context) bool {
 		return true
 
 	case tui.KeyDown, tui.KeyEnter, 'j':
-		mb.menu.dropdownOpen = true
-		mb.menu.selectedItem = 0
-		mb.requestLayout()
-		mb.markDirty()
-		return true
+		if catCount > 0 {
+			mb.menu.dropdownOpen = true
+			mb.menu.selectedItem = mb.menu.firstEnabledItem(mb.menu.selectedCategory)
+			mb.menu.syncItemSelection()
+			mb.requestLayout()
+			mb.markDirty()
+			return true
+		}
+		return false
 	}
 	return false
 }
 
 func (mb *MenuBar) handleDropdownKey(ke tui.KeyEvent, ctx *tui.Context) bool {
+	catCount := len(mb.menu.categories)
+	if catCount == 0 || mb.menu.selectedCategory < 0 || mb.menu.selectedCategory >= catCount {
+		mb.menu.dropdownOpen = false
+		mb.requestLayout()
+		mb.markDirty()
+		return true
+	}
+
 	cat := mb.menu.categories[mb.menu.selectedCategory]
 	itemCount := len(cat.Items)
 
 	// 1. Check for mnemonic hotkey within dropdown items first
 	for i, it := range cat.Items {
-		if it.Disabled() {
+		if it == nil || it.Disabled() {
 			continue
 		}
 		if it.Hotkey != 0 && unicode.ToLower(it.Hotkey) == unicode.ToLower(rune(ke.Code)) {
 			mb.menu.selectedItem = i
+			mb.menu.syncItemSelection()
 			mb.menu.executeItem(mb.menu.selectedCategory, i, ctx)
 			return true
 		}
@@ -751,49 +919,56 @@ func (mb *MenuBar) handleDropdownKey(ke tui.KeyEvent, ctx *tui.Context) bool {
 	switch ke.Code {
 	case tui.KeyEscape:
 		mb.menu.dropdownOpen = false
+		mb.menu.syncItemSelection()
 		mb.requestLayout()
 		mb.markDirty()
 		return true
 
 	case tui.KeyUp, 'k':
 		if itemCount > 0 {
-			mb.menu.selectedItem = (mb.menu.selectedItem - 1 + itemCount) % itemCount
+			mb.menu.selectPrevItem()
 			mb.markDirty()
 		}
 		return true
 
 	case tui.KeyDown, 'j':
 		if itemCount > 0 {
-			mb.menu.selectedItem = (mb.menu.selectedItem + 1) % itemCount
+			mb.menu.selectNextItem()
 			mb.markDirty()
 		}
 		return true
 
 	case tui.KeyLeft, 'h':
-		catCount := len(mb.menu.categories)
-		mb.menu.selectedCategory = (mb.menu.selectedCategory - 1 + catCount) % catCount
-		mb.menu.selectedItem = 0
-		mb.requestLayout()
-		mb.markDirty()
+		if catCount > 0 {
+			mb.menu.selectedCategory = (mb.menu.selectedCategory - 1 + catCount) % catCount
+			mb.menu.selectedItem = mb.menu.firstEnabledItem(mb.menu.selectedCategory)
+			mb.menu.syncItemSelection()
+			mb.requestLayout()
+			mb.markDirty()
+		}
 		return true
 
 	case tui.KeyRight, 'l':
 		if mb.menu.selectedItem >= 0 && mb.menu.selectedItem < len(cat.Items) {
 			currItem := cat.Items[mb.menu.selectedItem]
-			if currItem.HasSubmenu() {
+			if currItem != nil && currItem.HasSubmenu() && !currItem.Disabled() {
 				mb.menu.openSubmenu(ctx)
 				return true
 			}
 		}
-		catCount := len(mb.menu.categories)
-		mb.menu.selectedCategory = (mb.menu.selectedCategory + 1) % catCount
-		mb.menu.selectedItem = 0
-		mb.requestLayout()
-		mb.markDirty()
+		if catCount > 0 {
+			mb.menu.selectedCategory = (mb.menu.selectedCategory + 1) % catCount
+			mb.menu.selectedItem = mb.menu.firstEnabledItem(mb.menu.selectedCategory)
+			mb.menu.syncItemSelection()
+			mb.requestLayout()
+			mb.markDirty()
+		}
 		return true
 
 	case tui.KeyEnter:
-		mb.menu.executeItem(mb.menu.selectedCategory, mb.menu.selectedItem, ctx)
+		if mb.menu.selectedItem >= 0 && mb.menu.selectedItem < len(cat.Items) {
+			mb.menu.executeItem(mb.menu.selectedCategory, mb.menu.selectedItem, ctx)
+		}
 		return true
 	}
 	return false
@@ -809,11 +984,12 @@ func (mb *MenuBar) handleSubmenuKey(ke tui.KeyEvent, ctx *tui.Context) bool {
 
 	// 1. Check for hotkey mnemonic in current submenu level first
 	for i, it := range top.items {
-		if it.Disabled() {
+		if it == nil || it.Disabled() {
 			continue
 		}
 		if it.Hotkey != 0 && unicode.ToLower(it.Hotkey) == unicode.ToLower(rune(ke.Code)) {
 			top.sel = i
+			mb.menu.syncItemSelection()
 			if it.HasSubmenu() {
 				mb.menu.openSubmenu(ctx)
 			} else {
@@ -827,20 +1003,21 @@ func (mb *MenuBar) handleSubmenuKey(ke tui.KeyEvent, ctx *tui.Context) bool {
 	switch ke.Code {
 	case tui.KeyEscape, tui.KeyLeft, 'h':
 		mb.menu.submenuStack = mb.menu.submenuStack[:topIdx]
+		mb.menu.syncItemSelection()
 		mb.requestLayout()
 		mb.markDirty()
 		return true
 
 	case tui.KeyUp, 'k':
 		if subCount > 0 {
-			top.sel = (top.sel - 1 + subCount) % subCount
+			mb.menu.selectPrevSubmenuItem(top)
 			mb.markDirty()
 		}
 		return true
 
 	case tui.KeyDown, 'j':
 		if subCount > 0 {
-			top.sel = (top.sel + 1) % subCount
+			mb.menu.selectNextSubmenuItem(top)
 			mb.markDirty()
 		}
 		return true
@@ -848,7 +1025,7 @@ func (mb *MenuBar) handleSubmenuKey(ke tui.KeyEvent, ctx *tui.Context) bool {
 	case tui.KeyRight, 'l':
 		if top.sel >= 0 && top.sel < subCount {
 			item := top.items[top.sel]
-			if item.HasSubmenu() {
+			if item != nil && item.HasSubmenu() && !item.Disabled() {
 				mb.menu.openSubmenu(ctx)
 				return true
 			}
@@ -858,14 +1035,17 @@ func (mb *MenuBar) handleSubmenuKey(ke tui.KeyEvent, ctx *tui.Context) bool {
 	case tui.KeyEnter, ' ':
 		if top.sel >= 0 && top.sel < subCount {
 			item := top.items[top.sel]
-			if item.HasSubmenu() {
-				mb.menu.openSubmenu(ctx)
+			if item != nil && !item.Disabled() {
+				if item.HasSubmenu() {
+					mb.menu.openSubmenu(ctx)
+					return true
+				}
+				item.Trigger()
+				mb.menu.Deactivate(ctx)
 				return true
 			}
-			item.Trigger()
 		}
-		mb.menu.Deactivate(ctx)
-		return true
+		return true // Inert on disabled item; keep open
 	}
 	return false
 }
@@ -896,6 +1076,8 @@ func (mb *MenuBar) requestLayout() {
 type MenuOverlay struct {
 	ctx  *tui.Context
 	menu *TopMenu
+
+	dropdownRect tui.Rect
 }
 
 // Init mounts the overlay into the TUI context.
@@ -903,7 +1085,14 @@ func (mo *MenuOverlay) Init(ctx *tui.Context) {
 	mo.ctx = ctx
 }
 
-// Layout sizes the overlay layer to match container bounds when active.
+func (mo *MenuOverlay) measure(s string) int {
+	if mo.ctx != nil {
+		return mo.ctx.StringWidth(s)
+	}
+	return tui.StringWidth(s)
+}
+
+// Layout sizes the overlay layer to match container bounds when active and computes popup geometry.
 func (mo *MenuOverlay) Layout(c tui.Constraints) tui.Size {
 	if !mo.menu.dropdownOpen && len(mo.menu.submenuStack) == 0 && mo.menu.activeModal == nil {
 		return tui.Size{}
@@ -913,36 +1102,26 @@ func (mo *MenuOverlay) Layout(c tui.Constraints) tui.Size {
 		msz := mo.ctx.LayoutChild(mo.menu.activeModal, c)
 		mo.ctx.PlaceChild(mo.menu.activeModal, tui.Rect{X: 0, Y: 0, W: msz.W, H: msz.H})
 	}
+	if mo.menu.dropdownOpen {
+		mo.computeGeometry(sz)
+	}
 	return sz
 }
 
-// Render paints dropdowns, cascading submenus, or active modals on the overlay surface.
-func (mo *MenuOverlay) Render(s tui.Surface) {
-	sz := s.Size()
-	if sz.W <= 0 || sz.H <= 0 {
-		return
-	}
-
-	if mo.menu.activeModal != nil {
-		mo.menu.activeModal.Render(s)
-		return
-	}
-
-	if mo.menu.dropdownOpen {
-		mo.renderDropdownAndSubmenus(s, sz)
-	}
-}
-
-func (mo *MenuOverlay) renderDropdownAndSubmenus(s tui.Surface, sz tui.Size) {
+func (mo *MenuOverlay) computeGeometry(sz tui.Size) {
 	catIdx := mo.menu.selectedCategory
 	if catIdx < 0 || catIdx >= len(mo.menu.categories) {
+		mo.dropdownRect = tui.Rect{}
 		return
 	}
 	cat := mo.menu.categories[catIdx]
 
 	boxW := 18
 	for _, it := range cat.Items {
-		w := s.StringWidth(it.Name) + 6
+		if it == nil {
+			continue
+		}
+		w := mo.measure(it.Name) + 6
 		if it.HasSubmenu() {
 			w += 2
 		}
@@ -981,26 +1160,18 @@ func (mo *MenuOverlay) renderDropdownAndSubmenus(s tui.Surface, sz tui.Size) {
 		boxH = max(2, sz.H-y)
 	}
 
-	boxRect := tui.Rect{X: x, Y: y, W: boxW, H: boxH}
-	renderBoxFrame(s, boxRect, cat.Name, mo.menu.MenuStyle().Border())
+	mo.dropdownRect = tui.Rect{X: x, Y: y, W: boxW, H: boxH}
 
-	// Render items with pure rendering
-	for i, item := range cat.Items {
-		rowY := y + 1 + i
-		if rowY >= y+boxH-1 {
-			break
-		}
-		isSel := (i == mo.menu.selectedItem)
-		item.SetSelected(isSel)
-		item.RenderAt(s, x+1, rowY, boxW-2)
-	}
-
-	// Render cascading submenus for each stack level
-	prevRect := boxRect
-	for lvlIdx, lvl := range mo.menu.submenuStack {
+	// Compute cascading submenus for each stack level
+	prevRect := mo.dropdownRect
+	for lvlIdx := range mo.menu.submenuStack {
+		lvl := &mo.menu.submenuStack[lvlIdx]
 		subW := 22
 		for _, subIt := range lvl.items {
-			w := s.StringWidth(subIt.Name) + 6
+			if subIt == nil {
+				continue
+			}
+			w := mo.measure(subIt.Name) + 6
 			if subIt.HasSubmenu() {
 				w += 2
 			}
@@ -1031,7 +1202,66 @@ func (mo *MenuOverlay) renderDropdownAndSubmenus(s tui.Surface, sz tui.Size) {
 		}
 
 		subRect := tui.Rect{X: subX, Y: subY, W: subW, H: subH}
-		mo.menu.submenuStack[lvlIdx].rect = subRect
+		lvl.rect = subRect
+		prevRect = subRect
+	}
+}
+
+// Render paints dropdowns and cascading submenus on the overlay surface without state mutation.
+func (mo *MenuOverlay) Render(s tui.Surface) {
+	sz := s.Size()
+	if sz.W <= 0 || sz.H <= 0 {
+		return
+	}
+
+	if mo.menu.activeModal != nil {
+		if mo.ctx == nil {
+			mo.menu.activeModal.Render(s)
+		}
+		return
+	}
+
+	if mo.menu.dropdownOpen {
+		mo.renderDropdownAndSubmenus(s, sz)
+	}
+}
+
+func (mo *MenuOverlay) renderDropdownAndSubmenus(s tui.Surface, sz tui.Size) {
+	catIdx := mo.menu.selectedCategory
+	if catIdx < 0 || catIdx >= len(mo.menu.categories) {
+		return
+	}
+	cat := mo.menu.categories[catIdx]
+
+	boxRect := mo.dropdownRect
+	if boxRect.W <= 0 || boxRect.H <= 0 {
+		mo.computeGeometry(sz)
+		boxRect = mo.dropdownRect
+	}
+	if boxRect.W <= 0 || boxRect.H <= 0 {
+		return
+	}
+
+	renderBoxFrame(s, boxRect, cat.Name, mo.menu.MenuStyle().Border())
+
+	// Render items purely using already calculated positions
+	for i, item := range cat.Items {
+		if item == nil {
+			continue
+		}
+		rowY := boxRect.Y + 1 + i
+		if rowY >= boxRect.Y+boxRect.H-1 {
+			break
+		}
+		item.RenderAt(s, boxRect.X+1, rowY, boxRect.W-2)
+	}
+
+	// Render cascading submenus for each stack level
+	for _, lvl := range mo.menu.submenuStack {
+		subRect := lvl.rect
+		if subRect.W <= 0 || subRect.H <= 0 {
+			continue
+		}
 
 		title := ""
 		if lvl.parent != nil {
@@ -1040,29 +1270,32 @@ func (mo *MenuOverlay) renderDropdownAndSubmenus(s tui.Surface, sz tui.Size) {
 		renderBoxFrame(s, subRect, title, mo.menu.MenuStyle().Border())
 
 		for j, subIt := range lvl.items {
-			rowY := subY + 1 + j
-			if rowY >= subY+subH-1 {
+			if subIt == nil {
+				continue
+			}
+			rowY := subRect.Y + 1 + j
+			if rowY >= subRect.Y+subRect.H-1 {
 				break
 			}
-			isSel := (j == lvl.sel)
-			subIt.SetSelected(isSel)
-			subIt.RenderAt(s, subX+1, rowY, subW-2)
+			subIt.RenderAt(s, subRect.X+1, rowY, subRect.W-2)
 		}
-		prevRect = subRect
 	}
 }
 
 func (mo *MenuOverlay) calculateDropdownX(catIdx, boxW, screenW int) int {
+	if catIdx < 0 || catIdx >= len(mo.menu.categories) {
+		return 0
+	}
 	cat := mo.menu.categories[catIdx]
 	if cat.RightPeg {
-		return screenW - boxW - 1
+		return max(0, screenW-boxW-1)
 	}
 
 	x := 1
 	for i := 0; i < catIdx; i++ {
 		c := mo.menu.categories[i]
 		if !c.RightPeg {
-			x += len(c.Name) + 3
+			x += mo.measure(c.Name) + 3
 		}
 	}
 	return x
