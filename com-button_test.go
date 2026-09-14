@@ -22,6 +22,10 @@ func newMockSurface(w, h int) *mockSurface {
 func (m *mockSurface) SetCell(x, y int, content string, st style.Style) {
 	if x >= 0 && x < m.w && y >= 0 && y < m.h {
 		m.cells[[2]int{x, y}] = content
+		w := tui.StringWidth(content)
+		for i := 1; i < w && x+i < m.w; i++ {
+			m.cells[[2]int{x + i, y}] = ""
+		}
 	}
 }
 

@@ -176,11 +176,19 @@ func TestModal_ChildMountingAndDistinctNodeIDs(t *testing.T) {
 		}
 	}()
 
-	time.Sleep(50 * time.Millisecond)
-
-	modalID := modal.NodeID()
-	btn1ID := btn1.NodeID()
-	btn2ID := btn2.NodeID()
+	var modalID, btn1ID, btn2ID tui.NodeID
+	doneUpdate := make(chan struct{})
+	app.Update(func() {
+		modalID = modal.NodeID()
+		btn1ID = btn1.NodeID()
+		btn2ID = btn2.NodeID()
+		close(doneUpdate)
+	})
+	select {
+	case <-doneUpdate:
+	case <-time.After(3 * time.Second):
+		t.Fatal("app.Update did not execute within 3s")
+	}
 
 	if modalID == 0 || btn1ID == 0 || btn2ID == 0 {
 		t.Fatalf("expected non-zero NodeIDs for all mounted components: modal=%d, btn1=%d, btn2=%d", modalID, btn1ID, btn2ID)
