@@ -3,6 +3,7 @@ package editor
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -185,9 +186,9 @@ func TestButton_StandaloneWidget(t *testing.T) {
 
 func TestButton_AppLifecycleAndFocusActivation(t *testing.T) {
 	tb := tui.NewTestBackend(80, 24)
-	var clicked bool
+	var clicked atomic.Bool
 	btn := NewButton("Save", func() {
-		clicked = true
+		clicked.Store(true)
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -213,22 +214,42 @@ func TestButton_AppLifecycleAndFocusActivation(t *testing.T) {
 	tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
 	time.Sleep(50 * time.Millisecond)
 
-	if !clicked {
+	if !clicked.Load() {
 		t.Fatal("Button did not activate on Enter when mounted in real App and focused by framework focus manager")
 	}
 
 	// Disable button and verify it no longer activates
-	clicked = false
-	btn.SetDisabled(true)
-	time.Sleep(30 * time.Millisecond)
+	clicked.Store(false)
+	doneDisable := make(chan struct{})
+	app.Update(func() {
+		btn.SetDisabled(true)
+		close(doneDisable)
+	})
+	select {
+	case <-doneDisable:
+	case <-time.After(3 * time.Second):
+		t.Fatal("app.Update did not run within 3s")
+	}
 
-	if btn.AcceptsFocus() {
+	var accepts bool
+	doneCheck := make(chan struct{})
+	app.Update(func() {
+		accepts = btn.AcceptsFocus()
+		close(doneCheck)
+	})
+	select {
+	case <-doneCheck:
+	case <-time.After(3 * time.Second):
+		t.Fatal("app.Update did not run within 3s")
+	}
+
+	if accepts {
 		t.Fatal("Disabled button must report AcceptsFocus() == false")
 	}
 
 	tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
 	time.Sleep(30 * time.Millisecond)
-	if clicked {
+	if clicked.Load() {
 		t.Fatal("Disabled button must not activate on Enter")
 	}
 }
