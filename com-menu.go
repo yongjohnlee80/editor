@@ -685,6 +685,14 @@ func (mb *MenuBar) HandleEvent(ev tui.Event) bool {
 }
 
 func (mb *MenuBar) handleBarKey(ke tui.KeyEvent, ctx *tui.Context) bool {
+	// 1. Mnemonic hotkeys for categories take top precedence on bar
+	for i, cat := range mb.menu.categories {
+		if cat.Hotkey != 0 && unicode.ToLower(cat.Hotkey) == unicode.ToLower(rune(ke.Code)) {
+			mb.menu.OpenCategory(i, ctx)
+			return true
+		}
+	}
+
 	catCount := len(mb.menu.categories)
 	switch ke.Code {
 	case tui.KeyEscape:
@@ -711,15 +719,6 @@ func (mb *MenuBar) handleBarKey(ke tui.KeyEvent, ctx *tui.Context) bool {
 		mb.requestLayout()
 		mb.markDirty()
 		return true
-
-	default:
-		// Mnemonic hotkeys for categories
-		for i, cat := range mb.menu.categories {
-			if unicode.ToLower(cat.Hotkey) == unicode.ToLower(rune(ke.Code)) {
-				mb.menu.OpenCategory(i, ctx)
-				return true
-			}
-		}
 	}
 	return false
 }
@@ -727,6 +726,18 @@ func (mb *MenuBar) handleBarKey(ke tui.KeyEvent, ctx *tui.Context) bool {
 func (mb *MenuBar) handleDropdownKey(ke tui.KeyEvent, ctx *tui.Context) bool {
 	cat := mb.menu.categories[mb.menu.selectedCategory]
 	itemCount := len(cat.Items)
+
+	// 1. Check for mnemonic hotkey within dropdown items first
+	for i, it := range cat.Items {
+		if it.Disabled() {
+			continue
+		}
+		if it.Hotkey != 0 && unicode.ToLower(it.Hotkey) == unicode.ToLower(rune(ke.Code)) {
+			mb.menu.selectedItem = i
+			mb.menu.executeItem(mb.menu.selectedCategory, i, ctx)
+			return true
+		}
+	}
 
 	switch ke.Code {
 	case tui.KeyEscape:
@@ -758,10 +769,12 @@ func (mb *MenuBar) handleDropdownKey(ke tui.KeyEvent, ctx *tui.Context) bool {
 		return true
 
 	case tui.KeyRight, 'l':
-		currItem := cat.Items[mb.menu.selectedItem]
-		if currItem.HasSubmenu() {
-			mb.menu.openSubmenu(ctx)
-			return true
+		if mb.menu.selectedItem >= 0 && mb.menu.selectedItem < len(cat.Items) {
+			currItem := cat.Items[mb.menu.selectedItem]
+			if currItem.HasSubmenu() {
+				mb.menu.openSubmenu(ctx)
+				return true
+			}
 		}
 		catCount := len(mb.menu.categories)
 		mb.menu.selectedCategory = (mb.menu.selectedCategory + 1) % catCount
@@ -773,19 +786,6 @@ func (mb *MenuBar) handleDropdownKey(ke tui.KeyEvent, ctx *tui.Context) bool {
 	case tui.KeyEnter:
 		mb.menu.executeItem(mb.menu.selectedCategory, mb.menu.selectedItem, ctx)
 		return true
-
-	default:
-		// Check for mnemonic hotkey within dropdown items
-		for i, it := range cat.Items {
-			if it.Disabled() {
-				continue
-			}
-			if it.Hotkey != 0 && unicode.ToLower(it.Hotkey) == unicode.ToLower(rune(ke.Code)) {
-				mb.menu.selectedItem = i
-				mb.menu.executeItem(mb.menu.selectedCategory, i, ctx)
-				return true
-			}
-		}
 	}
 	return false
 }
@@ -797,6 +797,23 @@ func (mb *MenuBar) handleSubmenuKey(ke tui.KeyEvent, ctx *tui.Context) bool {
 	topIdx := len(mb.menu.submenuStack) - 1
 	top := &mb.menu.submenuStack[topIdx]
 	subCount := len(top.items)
+
+	// 1. Check for hotkey mnemonic in current submenu level first
+	for i, it := range top.items {
+		if it.Disabled() {
+			continue
+		}
+		if it.Hotkey != 0 && unicode.ToLower(it.Hotkey) == unicode.ToLower(rune(ke.Code)) {
+			top.sel = i
+			if it.HasSubmenu() {
+				mb.menu.openSubmenu(ctx)
+			} else {
+				it.Trigger()
+				mb.menu.Deactivate(ctx)
+			}
+			return true
+		}
+	}
 
 	switch ke.Code {
 	case tui.KeyEscape, tui.KeyLeft, 'h':
@@ -840,24 +857,6 @@ func (mb *MenuBar) handleSubmenuKey(ke tui.KeyEvent, ctx *tui.Context) bool {
 		}
 		mb.menu.Deactivate(ctx)
 		return true
-
-	default:
-		// Check for hotkey mnemonic in current submenu level
-		for i, it := range top.items {
-			if it.Disabled() {
-				continue
-			}
-			if it.Hotkey != 0 && unicode.ToLower(it.Hotkey) == unicode.ToLower(rune(ke.Code)) {
-				top.sel = i
-				if it.HasSubmenu() {
-					mb.menu.openSubmenu(ctx)
-				} else {
-					it.Trigger()
-					mb.menu.Deactivate(ctx)
-				}
-				return true
-			}
-		}
 	}
 	return false
 }
