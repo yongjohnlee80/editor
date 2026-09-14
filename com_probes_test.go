@@ -133,7 +133,7 @@ func TestProbe2_StandaloneMenuItemFocusActivation(t *testing.T) {
 	}
 
 	// Press Enter to activate
-	tb.InjectKey(tui.KeyEnter, 0, 0)
+	tb.Inject(tui.KeyEvent{Kind: tui.KeyPress, Code: tui.KeyEnter})
 	time.Sleep(50 * time.Millisecond)
 
 	if !activated {
