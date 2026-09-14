@@ -233,9 +233,11 @@ func (tm *TopMenu) Activate(ctx *tui.Context) {
 	tm.submenuStack = nil
 	tm.activeModal = nil
 	if ctx != nil {
+		ctx.FocusComponent(tm.bar)
 		ctx.RequestLayout()
 		ctx.MarkDirty()
 	} else if tm.bar != nil && tm.bar.ctx != nil {
+		tm.bar.ctx.RequestFocus()
 		tm.bar.ctx.RequestLayout()
 		tm.bar.ctx.MarkDirty()
 	}
@@ -253,9 +255,11 @@ func (tm *TopMenu) OpenCategory(catIdx int, ctx *tui.Context) {
 	tm.submenuStack = nil
 	tm.activeModal = nil
 	if ctx != nil {
+		ctx.FocusComponent(tm.bar)
 		ctx.RequestLayout()
 		ctx.MarkDirty()
 	} else if tm.bar != nil && tm.bar.ctx != nil {
+		tm.bar.ctx.RequestFocus()
 		tm.bar.ctx.RequestLayout()
 		tm.bar.ctx.MarkDirty()
 	}
@@ -496,6 +500,11 @@ func (mb *MenuBar) Layout(c tui.Constraints) tui.Size {
 		return c.Constrain(tui.Size{W: 16, H: c.MaxH})
 	}
 	return c.Constrain(tui.Size{W: c.MaxW, H: 1})
+}
+
+// AcceptsFocus implements tui.Focusable.
+func (mb *MenuBar) AcceptsFocus() bool {
+	return true
 }
 
 // MenuStyle returns the active or fallback style configuration for the menu.
