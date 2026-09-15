@@ -430,8 +430,16 @@ func TestTopMenu_F10TogglesMenuBar(t *testing.T) {
 	}
 }
 
-// Navigating to Option -> Keymaps opens a cascading submenu on the right allowing
-// switching between Vim and Nano keymaps.
+// Option -> Keymaps switches the editor between the Vim and Nano keysets.
+//
+// DRIVEN BY INTENT, NOT BY KEY CHOREOGRAPHY. This used to press
+// F10/Right/Enter/Enter and depend on exactly what each of those did in the
+// editor's own menu widget. Those bindings now belong to golib, which tests
+// them; repeating the choreography here tested the widget's navigation and
+// broke the moment it differed, while saying nothing about the editor. What
+// the editor owns is the MODEL and the COMMAND TABLE — that a row called
+// "Keymaps" exists under Option, that its children are radios, and that
+// activating one switches the keyset and says so. That is what this asserts.
 func TestTopMenu_KeymapSwitchModal(t *testing.T) {
 	h := newHarness(t, DefaultConfig(), "")
 
@@ -439,47 +447,48 @@ func TestTopMenu_KeymapSwitchModal(t *testing.T) {
 		t.Fatalf("initial keyset = %v, want KeysetVim", ks)
 	}
 
-	// F10 to activate menu bar
-	h.pressKey(tui.KeyF10)
-
-	// Move right to Option
-	h.pressKey(tui.KeyRight)
-
-	// Open dropdown
-	h.pressKey(tui.KeyEnter)
-
-	// Open Keymaps cascading submenu on the right
-	h.pressKey(tui.KeyEnter)
-
-	modalScreen := h.tb.String()
-	if !strings.Contains(modalScreen, "Keymaps") || !strings.Contains(modalScreen, "Nano (modeless)") {
-		t.Fatalf("Keymaps cascading submenu was not rendered; screen:\n%s", modalScreen)
+	// The cascade renders: Option holds Keymaps, which holds both keysets.
+	h.read(func() { h.app.menu.OpenCategory(idOption) })
+	h.settle()
+	h.read(func() {
+		if err := h.app.menu.Menu().Open(idKeymaps); err != nil {
+			t.Fatalf("Open(Keymaps): %v", err)
+		}
+	})
+	h.settle()
+	screen := h.tb.String()
+	if !strings.Contains(screen, "Keymaps") || !strings.Contains(screen, "Nano (modeless)") {
+		t.Fatalf("the Keymaps cascade did not render; screen:\n%s", screen)
 	}
 
-	// Press '2' to switch to Nano
-	h.pressKey('2')
-
+	// Choosing Nano switches the keyset and reports it.
+	h.read(func() { h.app.menu.Menu().Select(idKeysetNano) })
+	h.settle()
+	h.pressKey('\r')
 	if ks := h.keyset(); ks != widget.KeysetNano {
 		t.Fatalf("keyset after selecting Nano = %v, want KeysetNano", ks)
 	}
 	if msg := h.message(); !strings.Contains(msg, "Nano") {
-		t.Errorf("expected status message mentioning Nano, got %q", msg)
+		t.Errorf("status message = %q, want it to mention Nano", msg)
 	}
 
-	// Switch back to Vim via menu
-	h.pressKey(tui.KeyF10)
-	h.pressKey(tui.KeyRight)
-	h.pressKey(tui.KeyEnter)
-	h.pressKey(tui.KeyEnter)
-
-	// Press '1' to switch to Vim
-	h.pressKey('1')
-
+	// And back again, which is the half that proves the rows are a radio pair
+	// rather than a one-way switch.
+	h.read(func() { h.app.menu.OpenCategory(idOption) })
+	h.settle()
+	h.read(func() {
+		if err := h.app.menu.Menu().Open(idKeymaps); err != nil {
+			t.Fatalf("reopen Keymaps: %v", err)
+		}
+		h.app.menu.Menu().Select(idKeysetVim)
+	})
+	h.settle()
+	h.pressKey('\r')
 	if ks := h.keyset(); ks != widget.KeysetVim {
 		t.Fatalf("keyset after selecting Vim = %v, want KeysetVim", ks)
 	}
 	if msg := h.message(); !strings.Contains(msg, "Vim") {
-		t.Errorf("expected status message mentioning Vim, got %q", msg)
+		t.Errorf("status message = %q, want it to mention Vim", msg)
 	}
 }
 
@@ -503,7 +512,10 @@ func TestTopMenu_AltShortcuts(t *testing.T) {
 	if !strings.Contains(screen, "Are you sure to quit?") {
 		t.Fatalf("Exit confirmation modal did not open on hotkey 'x'; screen:\n%s", screen)
 	}
-	h.pressKey('n') // dismiss
+	// Escape dismisses. The old dialog buttons carried y/n mnemonics and this
+	// pressed 'n'; golib's Button has none, and Escape routes to the
+	// cancel-role button instead, which is the same outcome by the same intent.
+	h.escape()
 
 	// Alt+o directly opens Option dropdown
 	h.pressKeyMod('o', tui.ModAlt)
@@ -529,9 +541,19 @@ func TestTopMenu_PlacementLeft(t *testing.T) {
 	cfg.Menu.Placement = "left"
 	h := newHarness(t, cfg, "")
 
+	// THE "Menu" TITLE IS GONE. The editor's own left placement drew a titled
+	// panel; golib's vertical bar is a column of rows and nothing else, so the
+	// categories themselves are what proves the bar is there and vertical.
 	screen := h.tb.String()
-	if !strings.Contains(screen, "Menu") || !strings.Contains(screen, "File") {
-		t.Fatalf("left menu panel not rendered; screen:\n%s", screen)
+	for _, want := range []string{"File", "Option", "Help"} {
+		if !strings.Contains(screen, want) {
+			t.Fatalf("the left bar is missing %q; screen:\n%s", want, screen)
+		}
+	}
+	// Vertical, not the top bar wrapped: each category on its own line.
+	if rowOf(screen, "File") == rowOf(screen, "Option") {
+		t.Errorf("File and Option are on the same line, so the bar is not a column:\n%s",
+			screen)
 	}
 
 	// Alt+f opens File dropdown to the right of the sidemenu
@@ -672,4 +694,17 @@ func TestDocsStylesSnippet_Compiles(t *testing.T) {
 	if cmdBox == nil {
 		t.Fatal("expected non-nil cmdBox")
 	}
+}
+
+// rowOf is the index of the first screen line containing sub, or -1.
+//
+// Used to tell a vertical bar from a horizontal one without hard-coding
+// coordinates that a width or padding change would invalidate.
+func rowOf(screen, sub string) int {
+	for i, line := range strings.Split(screen, "\n") {
+		if strings.Contains(line, sub) {
+			return i
+		}
+	}
+	return -1
 }
