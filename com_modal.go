@@ -17,12 +17,12 @@ package editor
 //     closed on any activation, which quietly made "Yes" and "No" the same
 //     event as far as an observer was concerned.
 //
-//  2. THE y / n / o MNEMONICS ARE GONE. The old buttons carried a mnemonic
-//     rune; golib's Button has no equivalent, and the alternatives all fight
-//     the widget's focus model rather than extending it. The role semantics
-//     cover the same ground for dialogs this shape: the default-role button
-//     takes initial focus so Enter confirms, and Escape resolves to the
-//     cancel-role button. Tab still moves between them.
+//  2. THE y / n / o MNEMONICS ARE BACK, through golib rather than around it.
+//     A Button now carries the key as metadata and the Modal resolves it
+//     against its own enabled buttons, so a dialog answers 'y' and 'n' from
+//     either focus without any control in the tree claiming a bare letter for
+//     itself. Arrows and the Vim aliases move between them; Enter and Escape
+//     mean what the roles say.
 
 import (
 	"github.com/yongjohnlee80/golib/tui/widget"
@@ -78,6 +78,7 @@ func (tm *TopMenu) newExitModal() *widget.Modal {
 	yes := widget.NewButton("Yes",
 		widget.WithButtonStyle(defaultButtonStyle),
 		widget.WithRole(widget.ButtonRoleDefault),
+		widget.WithMnemonic('y'),
 		widget.WithOnActivate(func() {
 			m.Dismiss(widget.DismissAccept)
 			tm.finish()
@@ -88,6 +89,7 @@ func (tm *TopMenu) newExitModal() *widget.Modal {
 	no := widget.NewButton("No",
 		widget.WithButtonStyle(defaultButtonStyle),
 		widget.WithRole(widget.ButtonRoleCancel),
+		widget.WithMnemonic('n'),
 		widget.WithOnActivate(func() {
 			m.Dismiss(widget.DismissCancel)
 			tm.finish()
@@ -96,6 +98,7 @@ func (tm *TopMenu) newExitModal() *widget.Modal {
 	m = widget.NewModal(widget.NewText("Are you sure to quit?", widget.WithTextStyle(bodyStyle)),
 		widget.WithModalTitle("Exit Confirmation"),
 		widget.WithModalStyle(defaultModalStyle),
+		widget.WithModalVimNavigation(true),
 		widget.WithButtons(yes, no),
 		// Escape reaches here too, having routed through the cancel button, so
 		// the teardown lives in one place rather than in each button.
@@ -114,6 +117,7 @@ func (tm *TopMenu) newNoticeModal(title, body string) *widget.Modal {
 	ok := widget.NewButton("OK",
 		widget.WithButtonStyle(defaultButtonStyle),
 		widget.WithRole(widget.ButtonRoleCancel),
+		widget.WithMnemonic('o'),
 		widget.WithOnActivate(func() {
 			m.Dismiss(widget.DismissAccept)
 			tm.finish()
@@ -122,6 +126,7 @@ func (tm *TopMenu) newNoticeModal(title, body string) *widget.Modal {
 	m = widget.NewModal(widget.NewText(body, widget.WithTextStyle(bodyStyle)),
 		widget.WithModalTitle(title),
 		widget.WithModalStyle(defaultModalStyle),
+		widget.WithModalVimNavigation(true),
 		widget.WithButtons(ok),
 		widget.WithOnDismiss(func(widget.DismissReason) { tm.finish() }))
 	return m

@@ -255,8 +255,6 @@ func (a *App) Init(ctx *tui.Context) {
 	// The clock is a repeating TickEvent addressed to this node, so it costs
 	// nothing while idle and needs no goroutine of its own.
 	ctx.Every(time.Second)
-	// The menu is mounted by now, so its Escape binding can be layered on.
-	a.menu.InstallEscapeToLeave()
 	ctx.FocusComponent(a.editorPane)
 	a.refresh()
 }
@@ -287,12 +285,12 @@ func (a *App) HandleEvent(ev tui.Event) bool {
 		// entitled to the same news.
 		a.menu.CloseOnBlur()
 	case tui.KeyEvent:
-		// ESCAPE LEAVES THE MENU. The widget uses Escape to close one open
-		// level and does not surrender focus when the last one goes, which is
-		// right for a menu that might be nested inside something else. This
-		// editor wants the key to walk all the way out, so the event only
-		// arrives here once the menu has stopped consuming it — one Escape per
-		// level, then one more that returns to the editor.
+		// ESCAPE LEAVES THE MENU, once the menu has stopped consuming it. The
+		// widget closes exactly one open level per press and leaves Escape
+		// UNHANDLED when there are none, so the key arrives here only at the
+		// root — one press per level, then one more that returns to the buffer.
+		// No consumer resolver is needed for that any more; the widget's own
+		// contract produces it.
 		if e.Kind == tui.KeyPress && e.Code == tui.KeyEscape && a.menu.Active() {
 			a.menu.Deactivate()
 			return true

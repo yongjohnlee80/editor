@@ -138,6 +138,10 @@ func NewTopMenu(placement MenuPlacement, cb TopMenuCallbacks) *TopMenu {
 	}
 	tm.menu = widget.NewMenu(
 		widget.WithMenuStyle(defaultMenuStyle),
+		// This editor is Vim-shaped, so hjkl navigates the menu as well. A
+		// declared row hotkey still wins over the alias, so the File/Option/Help
+		// mnemonics stay reachable.
+		widget.WithMenuVimNavigation(true),
 		widget.WithActionExecutor(tm.execute),
 	)
 	tm.bar = widget.NewMenuBar(tm.menu, widget.WithBarPlacement(barPlacement(placement)))
@@ -192,43 +196,6 @@ func (tm *TopMenu) execute(inv tui.ActionInvocation) bool {
 	}
 	fn()
 	return true
-}
-
-// leaveMenuAction is claimed for an Escape the menu has nothing left to close.
-//
-// It is deliberately an action NO ONE HANDLES. The widget binds Escape to
-// "close every open level" and reports it handled even when none are open —
-// correct for a menu that may be nested inside something else, and not what
-// this editor wants, which is for the key to keep walking until it reaches the
-// buffer. Claiming the event with an inert action makes the runtime fall
-// through to raw delivery, so the KeyEvent bubbles to App, which deactivates.
-// Returning false instead would hand the event straight to the widget's own
-// binding, which swallows it.
-type leaveMenuAction struct{}
-
-func (leaveMenuAction) ActionID() tui.ActionID { return "editor.menu.leave" }
-
-// InstallEscapeToLeave adds the binding above. Called once the menu is mounted,
-// because a resolver is installed on a context and there is none before Init.
-//
-// A CONSUMER LAYER, so the widget's own bindings stay in place: this is
-// consulted first and defers to them whenever a level is open, which is what
-// keeps one Escape per level working.
-func (tm *TopMenu) InstallEscapeToLeave() {
-	ctx := tm.menu.Context()
-	if ctx == nil {
-		return
-	}
-	ctx.SetActionResolvers(tui.ActionResolverFunc(func(ev tui.Event) (tui.Action, bool) {
-		k, ok := ev.(tui.KeyEvent)
-		if !ok || k.Kind != tui.KeyPress || k.Code != tui.KeyEscape {
-			return nil, false
-		}
-		if tm.menu.OpenLevels() > 0 {
-			return nil, false // the widget closes a level; that is its job
-		}
-		return leaveMenuAction{}, true
-	}))
 }
 
 // Active reports whether the menu is the surface the user is driving.

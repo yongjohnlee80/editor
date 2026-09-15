@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -853,4 +854,126 @@ func TestF10AlwaysStartsAtTheFirstCategory(t *testing.T) {
 	if sel != idFile {
 		t.Errorf("F10 resumed on %q; every visit starts at the first category", sel)
 	}
+}
+
+// TestEscapeUnwindsTheMenuOneStageAtATime.
+//
+// The original editor's Escape was STAGED, and the migration flattened it: the
+// widget closed the whole cascade on the first press and reported the key
+// handled even with nothing open, so this editor had to layer a resolver that
+// claimed Escape back just to let it reach the buffer.
+//
+// The widget now closes exactly one level per press and leaves Escape unhandled
+// at the root, so the staging falls out of the contract and the workaround is
+// gone. Counting presses is the assertion: a user backing out of a submenu
+// expects to land in the dropdown that opened it, not on the bar.
+func TestEscapeUnwindsTheMenuOneStageAtATime(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		open    func(h *harness)
+		presses int
+	}{
+		{"F10 only", func(h *harness) {}, 1},
+		{"a dropdown", func(h *harness) {
+			h.read(func() { h.app.menu.OpenCategory(idFile) })
+			h.settle()
+		}, 2},
+		{"a nested cascade", func(h *harness) {
+			h.read(func() { h.app.menu.OpenCategory(idOption) })
+			h.settle()
+			h.settle()
+			h.read(func() { _ = h.app.menu.Menu().Open(idKeymaps) })
+			h.settle()
+		}, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, DefaultConfig(), "")
+			h.pressKey(tui.KeyF10)
+			tc.open(h)
+			h.settle()
+			if !h.menuActive() {
+				t.Fatal("the menu is not active after opening")
+			}
+
+			// One short of the count: the menu must still be active.
+			for i := 0; i < tc.presses-1; i++ {
+				h.escape()
+				if !h.menuActive() {
+					t.Fatalf("Escape %d of %d left the menu; each press should unwind "+
+						"one stage", i+1, tc.presses)
+				}
+			}
+			h.escape()
+			if h.menuActive() {
+				t.Errorf("the menu is still active after %d presses", tc.presses)
+			}
+			// And focus came back to the buffer rather than being left nowhere.
+			if got := h.mode(); got == "" {
+				t.Error("the editor reports no mode after the menu released focus")
+			}
+		})
+	}
+}
+
+// TestTheExitDialogAnswersItsMnemonics.
+//
+// The original editor's exit confirmation answered y and n from either button.
+// The first migration dropped that and recorded it as an accepted loss; it was
+// not one, and it is back — through golib's Button metadata and the Modal's
+// resolution rather than around them.
+func TestTheExitDialogAnswersItsMnemonics(t *testing.T) {
+	t.Run("n dismisses without quitting", func(t *testing.T) {
+		var quit atomic.Bool
+		h := newHarnessQuit(t, func() { quit.Store(true) })
+		h.read(func() { h.app.menu.OpenExitModal() })
+		h.settle()
+		h.settle()
+		if !strings.Contains(h.tb.String(), "Are you sure") {
+			t.Fatalf("the dialog did not open:\n%s", h.tb.String())
+		}
+
+		h.pressKey('n')
+		if quit.Load() {
+			t.Error("n quit the editor; it is the cancel button")
+		}
+		if strings.Contains(h.tb.String(), "Are you sure") {
+			t.Errorf("n did not dismiss the dialog:\n%s", h.tb.String())
+		}
+	})
+
+	t.Run("y quits", func(t *testing.T) {
+		var quit atomic.Bool
+		h := newHarnessQuit(t, func() { quit.Store(true) })
+		h.read(func() { h.app.menu.OpenExitModal() })
+		h.settle()
+		h.settle()
+		h.pressKey('y')
+		if !quit.Load() {
+			t.Error("y did not quit; it is the confirm button")
+		}
+	})
+}
+
+// newHarnessQuit is newHarness with a quit callback the test can observe.
+func newHarnessQuit(t *testing.T, quit func()) *harness {
+	t.Helper()
+	tb := tui.NewTestBackend(80, 24)
+	app, err := New(DefaultConfig(), "", quit)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a := tui.NewApp(app, tui.WithBackend(tb))
+	h := &harness{t: t, app: app, rt: a, tb: tb, stop: cancel, done: make(chan error, 1)}
+	go func() { h.done <- a.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-h.done:
+		case <-time.After(3 * time.Second):
+			t.Error("App.Run did not return within 3s after cancel")
+		}
+	})
+	h.settle()
+	return h
 }
