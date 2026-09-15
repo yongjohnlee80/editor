@@ -90,3 +90,36 @@ var defaultModalStyle = widget.NewModalStyleFull(
 var bodyStyle = style.New().
 	Background(style.ANSI(7)).
 	Foreground(style.ANSI(0))
+
+// defaultButtonStyle dresses a dialog's controls to match the card they sit on.
+//
+// UNFOCUSED IS THE CARD'S OWN LOOK — black on white — so a button that is not
+// the one the keyboard will act on reads as part of the dialog rather than as a
+// second thing competing for attention. FOCUSED INVERTS IT, white on black,
+// which is the same inversion the menu bar uses for its selection: one visual
+// language for "this is where the keyboard is", in both places.
+//
+// Without this the buttons fall back to golib's token defaults, which resolve
+// against the terminal's theme and rendered as a blue fill that belonged to
+// neither the card nor the bar.
+var defaultButtonStyle = widget.NewButtonStyleFull(
+	// Normal: the card's own colours.
+	style.New().
+		Background(style.ANSI(7)).
+		Foreground(style.ANSI(0)),
+	// Focused: inverted, and bold so the brackets read as heavier too.
+	style.New().
+		Background(style.ANSI(0)).
+		Foreground(style.ANSI(7)).
+		Bold(true),
+	// Disabled: still on the card, greyed rather than removed — a control that
+	// exists but is unavailable says more than one that vanished.
+	style.New().
+		Background(style.ANSI(7)).
+		Foreground(style.ANSI(8)),
+	// Armed: pressed and not yet released. The focused look without the bold,
+	// so a press reads as a change without the label jumping weight.
+	style.New().
+		Background(style.ANSI(0)).
+		Foreground(style.ANSI(7)),
+)

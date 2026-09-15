@@ -76,6 +76,7 @@ func (tm *TopMenu) newExitModal() *widget.Modal {
 	var m *widget.Modal
 
 	yes := widget.NewButton("Yes",
+		widget.WithButtonStyle(defaultButtonStyle),
 		widget.WithRole(widget.ButtonRoleDefault),
 		widget.WithOnActivate(func() {
 			m.Dismiss(widget.DismissAccept)
@@ -85,6 +86,7 @@ func (tm *TopMenu) newExitModal() *widget.Modal {
 			}
 		}))
 	no := widget.NewButton("No",
+		widget.WithButtonStyle(defaultButtonStyle),
 		widget.WithRole(widget.ButtonRoleCancel),
 		widget.WithOnActivate(func() {
 			m.Dismiss(widget.DismissCancel)
@@ -110,6 +112,7 @@ func (tm *TopMenu) newNoticeModal(title, body string) *widget.Modal {
 	var m *widget.Modal
 
 	ok := widget.NewButton("OK",
+		widget.WithButtonStyle(defaultButtonStyle),
 		widget.WithRole(widget.ButtonRoleCancel),
 		widget.WithOnActivate(func() {
 			m.Dismiss(widget.DismissAccept)
