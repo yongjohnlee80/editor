@@ -6,6 +6,8 @@ github.com/yongjohnlee80/golib v0.5.20 h1:AZidScCenUp4K+mqwhXhNFn7cLaVC2B/uQsmQA
 github.com/yongjohnlee80/golib v0.5.20/go.mod h1:8C5jirm0P6lnk5MxCZKUf8mSND3w2JRq1CRBlV3YD0c=
 github.com/yongjohnlee80/golib v0.5.21-0.20260915182718-8dcef084263b h1:MQG9G5emTGmwHoLHWRIR5CYe6t+VmoM1fnKKFb5qlws=
 github.com/yongjohnlee80/golib v0.5.21-0.20260915182718-8dcef084263b/go.mod h1:8C5jirm0P6lnk5MxCZKUf8mSND3w2JRq1CRBlV3YD0c=
+github.com/yongjohnlee80/golib v0.5.21-0.20260915191810-6edeb59ababb h1:fQ7wyU7kwpD4LdQ/27gf/HgVdJxb/m/7ifQTrhLdbJ4=
+github.com/yongjohnlee80/golib v0.5.21-0.20260915191810-6edeb59ababb/go.mod h1:8C5jirm0P6lnk5MxCZKUf8mSND3w2JRq1CRBlV3YD0c=
 golang.org/x/sys v0.46.0 h1:noSf2Fq6F8DBgS+LysIkx7rIExoNHJsxOAtPp4rthXw=
 golang.org/x/sys v0.46.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
 golang.org/x/term v0.44.0 h1:0rLvDRCtNj0gZkyIXhCyOb2OAzEhLVqc4B+hrsBhrmc=

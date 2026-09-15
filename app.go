@@ -421,10 +421,9 @@ func (a *App) refresh() {
 // (which keyset is live) without closing over the App in every row, and what
 // makes the menu testable by comparing values instead of by clicking.
 //
-// ONE VISUAL CHANGE FROM THE OLD MENU: Help is no longer pegged to the right
-// end of the bar. The old widget had a RightPeg flag on a category; golib lays
-// the bar out as one run of rows and offers no per-row alignment, so Help now
-// follows Option. BarPlacement moves the whole bar, which is a different thing.
+// Help is pegged to the far end of the bar with MenuItemModel.PegRight, which
+// is the upstream replacement for the RightPeg flag this editor's own menu
+// carried.
 func (a *App) buildMenuModel() []widget.MenuItemModel {
 	vim := widget.NewRadio(idKeysetVim, "1. Vim  (modal)", keysetGroup, cmd(actKeysetVim))
 	vim.Hotkey, vim.HotkeyIdx = '1', 0
@@ -452,6 +451,9 @@ func (a *App) buildMenuModel() []widget.MenuItemModel {
 		hotkeyed(widget.NewCommand("help.about", "About", cmd(actHelpAbout)), 'a', 0),
 	})
 	help.Hotkey, help.HotkeyIdx = 'h', 0
+	// Help sits at the far end of the bar, where it has sat in this kind of
+	// application for thirty years.
+	help.PegRight = true
 
 	return []widget.MenuItemModel{file, option, help}
 }

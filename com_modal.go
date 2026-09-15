@@ -91,7 +91,7 @@ func (tm *TopMenu) newExitModal() *widget.Modal {
 			tm.finish()
 		}))
 
-	m = widget.NewModal(widget.NewText("Are you sure to quit?"),
+	m = widget.NewModal(widget.NewText("Are you sure to quit?", widget.WithTextStyle(bodyStyle)),
 		widget.WithModalTitle("Exit Confirmation"),
 		widget.WithModalStyle(defaultModalStyle),
 		widget.WithButtons(yes, no),
@@ -116,7 +116,7 @@ func (tm *TopMenu) newNoticeModal(title, body string) *widget.Modal {
 			tm.finish()
 		}))
 
-	m = widget.NewModal(widget.NewText(body),
+	m = widget.NewModal(widget.NewText(body, widget.WithTextStyle(bodyStyle)),
 		widget.WithModalTitle(title),
 		widget.WithModalStyle(defaultModalStyle),
 		widget.WithButtons(ok),

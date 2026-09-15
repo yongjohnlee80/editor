@@ -53,24 +53,37 @@ var defaultMenuStyle = widget.NewMenuStyle(
 		Foreground(style.ANSI(0)).
 		Border(style.BorderNormal))
 
-// defaultModalStyle is the dialog card: a rounded high-contrast box with a cyan
-// title over a stippled scrim.
+// defaultModalStyle is the dialog card: BLACK TEXT ON WHITE, the same inversion
+// the menu bar uses, so the two read as one chrome rather than two themes.
+//
+// The body inherits the card's background rather than setting one of its own,
+// which is what keeps the message from sitting in a differently-coloured patch
+// inside the card.
 var defaultModalStyle = widget.NewModalStyleFull(
-	// Card.
+	// Card, and therefore the body behind the text.
 	style.New().
-		Background(style.ANSI(0)).
-		Foreground(style.ANSI(7)),
-	// Title.
+		Background(style.ANSI(7)).
+		Foreground(style.ANSI(0)),
+	// Title, on the frame's top rule. Bold rather than coloured: the position
+	// already says it is the title.
 	style.New().
-		Foreground(style.ANSI(14)).
+		Background(style.ANSI(7)).
+		Foreground(style.ANSI(0)).
 		Bold(true),
 	// Border.
 	style.New().
-		Background(style.ANSI(0)).
-		Foreground(style.ANSI(7)).
+		Background(style.ANSI(7)).
+		Foreground(style.ANSI(0)).
 		Border(style.BorderRounded),
-	// Scrim.
+	// Scrim over the content behind the dialog.
 	style.New().
 		Foreground(style.ANSI(8)).
 		Faint(true),
 )
+
+// bodyStyle dresses a dialog's message to match the card it sits on. A Text
+// with no style of its own paints on the terminal default, which shows as a
+// rectangle of the wrong colour in the middle of the card.
+var bodyStyle = style.New().
+	Background(style.ANSI(7)).
+	Foreground(style.ANSI(0))
