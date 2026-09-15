@@ -21,10 +21,13 @@ import (
 // defaultMenuStyle is the Borland bar: dark text on a light strip, inverted
 // where the selection sits.
 var defaultMenuStyle = widget.NewMenuStyle(
-	// Surface: the bar and dropdown background.
+	// Surface: the bar and dropdown background. BOLD, matching golib's own
+	// default — menu labels are chrome sitting against the document, and
+	// weight is what separates the two.
 	style.New().
 		Background(style.ANSI(7)).
-		Foreground(style.ANSI(0)),
+		Foreground(style.ANSI(0)).
+		Bold(true),
 	// Selected: inverted, which is how this scheme has always shown the cursor.
 	style.New().
 		Background(style.ANSI(0)).
