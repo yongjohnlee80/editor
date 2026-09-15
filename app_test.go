@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -430,8 +431,16 @@ func TestTopMenu_F10TogglesMenuBar(t *testing.T) {
 	}
 }
 
-// Navigating to Option -> Keymaps opens a cascading submenu on the right allowing
-// switching between Vim and Nano keymaps.
+// Option -> Keymaps switches the editor between the Vim and Nano keysets.
+//
+// DRIVEN BY INTENT, NOT BY KEY CHOREOGRAPHY. This used to press
+// F10/Right/Enter/Enter and depend on exactly what each of those did in the
+// editor's own menu widget. Those bindings now belong to golib, which tests
+// them; repeating the choreography here tested the widget's navigation and
+// broke the moment it differed, while saying nothing about the editor. What
+// the editor owns is the MODEL and the COMMAND TABLE — that a row called
+// "Keymaps" exists under Option, that its children are radios, and that
+// activating one switches the keyset and says so. That is what this asserts.
 func TestTopMenu_KeymapSwitchModal(t *testing.T) {
 	h := newHarness(t, DefaultConfig(), "")
 
@@ -439,47 +448,48 @@ func TestTopMenu_KeymapSwitchModal(t *testing.T) {
 		t.Fatalf("initial keyset = %v, want KeysetVim", ks)
 	}
 
-	// F10 to activate menu bar
-	h.pressKey(tui.KeyF10)
-
-	// Move right to Option
-	h.pressKey(tui.KeyRight)
-
-	// Open dropdown
-	h.pressKey(tui.KeyEnter)
-
-	// Open Keymaps cascading submenu on the right
-	h.pressKey(tui.KeyEnter)
-
-	modalScreen := h.tb.String()
-	if !strings.Contains(modalScreen, "Keymaps") || !strings.Contains(modalScreen, "Nano (modeless)") {
-		t.Fatalf("Keymaps cascading submenu was not rendered; screen:\n%s", modalScreen)
+	// The cascade renders: Option holds Keymaps, which holds both keysets.
+	h.read(func() { h.app.menu.OpenCategory(idOption) })
+	h.settle()
+	h.read(func() {
+		if err := h.app.menu.Menu().Open(idKeymaps); err != nil {
+			t.Fatalf("Open(Keymaps): %v", err)
+		}
+	})
+	h.settle()
+	screen := h.tb.String()
+	if !strings.Contains(screen, "Keymaps") || !strings.Contains(screen, "Nano (modeless)") {
+		t.Fatalf("the Keymaps cascade did not render; screen:\n%s", screen)
 	}
 
-	// Press '2' to switch to Nano
-	h.pressKey('2')
-
+	// Choosing Nano switches the keyset and reports it.
+	h.read(func() { h.app.menu.Menu().Select(idKeysetNano) })
+	h.settle()
+	h.pressKey('\r')
 	if ks := h.keyset(); ks != widget.KeysetNano {
 		t.Fatalf("keyset after selecting Nano = %v, want KeysetNano", ks)
 	}
 	if msg := h.message(); !strings.Contains(msg, "Nano") {
-		t.Errorf("expected status message mentioning Nano, got %q", msg)
+		t.Errorf("status message = %q, want it to mention Nano", msg)
 	}
 
-	// Switch back to Vim via menu
-	h.pressKey(tui.KeyF10)
-	h.pressKey(tui.KeyRight)
-	h.pressKey(tui.KeyEnter)
-	h.pressKey(tui.KeyEnter)
-
-	// Press '1' to switch to Vim
-	h.pressKey('1')
-
+	// And back again, which is the half that proves the rows are a radio pair
+	// rather than a one-way switch.
+	h.read(func() { h.app.menu.OpenCategory(idOption) })
+	h.settle()
+	h.read(func() {
+		if err := h.app.menu.Menu().Open(idKeymaps); err != nil {
+			t.Fatalf("reopen Keymaps: %v", err)
+		}
+		h.app.menu.Menu().Select(idKeysetVim)
+	})
+	h.settle()
+	h.pressKey('\r')
 	if ks := h.keyset(); ks != widget.KeysetVim {
 		t.Fatalf("keyset after selecting Vim = %v, want KeysetVim", ks)
 	}
 	if msg := h.message(); !strings.Contains(msg, "Vim") {
-		t.Errorf("expected status message mentioning Vim, got %q", msg)
+		t.Errorf("status message = %q, want it to mention Vim", msg)
 	}
 }
 
@@ -503,7 +513,10 @@ func TestTopMenu_AltShortcuts(t *testing.T) {
 	if !strings.Contains(screen, "Are you sure to quit?") {
 		t.Fatalf("Exit confirmation modal did not open on hotkey 'x'; screen:\n%s", screen)
 	}
-	h.pressKey('n') // dismiss
+	// Escape dismisses. The old dialog buttons carried y/n mnemonics and this
+	// pressed 'n'; golib's Button has none, and Escape routes to the
+	// cancel-role button instead, which is the same outcome by the same intent.
+	h.escape()
 
 	// Alt+o directly opens Option dropdown
 	h.pressKeyMod('o', tui.ModAlt)
@@ -529,9 +542,19 @@ func TestTopMenu_PlacementLeft(t *testing.T) {
 	cfg.Menu.Placement = "left"
 	h := newHarness(t, cfg, "")
 
+	// THE "Menu" TITLE IS GONE. The editor's own left placement drew a titled
+	// panel; golib's vertical bar is a column of rows and nothing else, so the
+	// categories themselves are what proves the bar is there and vertical.
 	screen := h.tb.String()
-	if !strings.Contains(screen, "Menu") || !strings.Contains(screen, "File") {
-		t.Fatalf("left menu panel not rendered; screen:\n%s", screen)
+	for _, want := range []string{"File", "Option", "Help"} {
+		if !strings.Contains(screen, want) {
+			t.Fatalf("the left bar is missing %q; screen:\n%s", want, screen)
+		}
+	}
+	// Vertical, not the top bar wrapped: each category on its own line.
+	if rowOf(screen, "File") == rowOf(screen, "Option") {
+		t.Errorf("File and Option are on the same line, so the bar is not a column:\n%s",
+			screen)
 	}
 
 	// Alt+f opens File dropdown to the right of the sidemenu
@@ -672,4 +695,285 @@ func TestDocsStylesSnippet_Compiles(t *testing.T) {
 	if cmdBox == nil {
 		t.Fatal("expected non-nil cmdBox")
 	}
+}
+
+// rowOf is the index of the first screen line containing sub, or -1.
+//
+// Used to tell a vertical bar from a horizontal one without hard-coding
+// coordinates that a width or padding change would invalidate.
+func rowOf(screen, sub string) int {
+	for i, line := range strings.Split(screen, "\n") {
+		if strings.Contains(line, sub) {
+			return i
+		}
+	}
+	return -1
+}
+
+// attrAt is the rendered attributes of one cell, for asserting a HIGHLIGHT.
+//
+// A highlight is an attribute, not a character: a test that reads the text
+// cannot see one at all, which is how "the menu is highlighted" went unchecked
+// through a change that stopped highlighting it.
+func (h *harness) attrAt(x, y int) tui.CellAttrs {
+	h.t.Helper()
+	grid := h.tb.Snapshot()
+	if y >= len(grid) || x >= len(grid[y]) {
+		h.t.Fatalf("cell (%d,%d) is off the grid", x, y)
+	}
+	return grid[y][x].Attrs
+}
+
+// cellOf finds the first cell of sub on screen.
+func (h *harness) cellOf(sub string) (x, y int) {
+	h.t.Helper()
+	grid := h.tb.Snapshot()
+	for row := range grid {
+		line := ""
+		for _, c := range grid[row] {
+			if c.Continuation() {
+				continue
+			}
+			if c.Content == "" {
+				line += " "
+				continue
+			}
+			line += c.Content
+		}
+		if i := strings.Index(line, sub); i >= 0 {
+			return i, row
+		}
+	}
+	h.t.Fatalf("%q is not on screen:\n%s", sub, h.tb.String())
+	return 0, 0
+}
+
+// TestTheMenuShowsWhereTheKeyboardIs.
+//
+// Three states, because the interesting part is the DIFFERENCE between them
+// and any one of them alone is satisfied by a menu that highlights nothing:
+//
+//  1. editing — no category highlighted, or the bar claims the keyboard;
+//  2. menu active — the category is highlighted, or there is no way to tell the
+//     menu is what the arrow keys are driving;
+//  3. dropdown open — a row INSIDE it is highlighted, not the category. Opening
+//     a level hands the selection to that level, and this editor briefly
+//     dragged it back to the bar, leaving the dropdown with nothing marked.
+func TestTheMenuShowsWhereTheKeyboardIs(t *testing.T) {
+	h := newHarness(t, DefaultConfig(), "")
+
+	fx, fy := h.cellOf("File")
+	ox, _ := h.cellOf("Option")
+
+	editing := h.attrAt(fx, fy)
+	if editing != h.attrAt(ox, fy) {
+		t.Errorf("while editing, File is painted %+v and Option %+v; the bar is "+
+			"claiming the keyboard\n%s", editing, h.attrAt(ox, fy), h.tb.String())
+	}
+
+	h.pressKey(tui.KeyF10)
+	if !h.menuActive() {
+		t.Fatal("F10 did not activate the menu")
+	}
+	active := h.attrAt(fx, fy)
+	if active == h.attrAt(ox, fy) {
+		t.Errorf("with the menu active, File is painted exactly like Option (%+v); "+
+			"nothing shows which category the keys act on\n%s", active, h.tb.String())
+	}
+
+	h.read(func() { h.app.menu.OpenCategory(idFile) })
+	h.settle()
+	h.settle()
+	nx, ny := h.cellOf("New")
+	sx, sy := h.cellOf("Save") // its OWN row: sampling Save's column on New's
+	// row reads a cell inside New, which compares the highlighted row with
+	// itself and passes whatever the widget does.
+	if h.attrAt(nx, ny) == h.attrAt(sx, sy) {
+		t.Errorf("with the dropdown open, New is painted exactly like Save (%+v); "+
+			"the selection stayed on the bar instead of moving into the level\n%s",
+			h.attrAt(nx, ny), h.tb.String())
+	}
+	var sel widget.ItemID
+	h.read(func() { sel, _ = h.app.menu.Menu().Selected() })
+	if sel != "file.new" {
+		t.Errorf("the selection is %q with File open, want the level's first row", sel)
+	}
+}
+
+// TestClickingIntoTheBufferClosesTheMenu.
+//
+// A dropdown left hanging after the user has clicked into the text is covering
+// the line they just aimed at, and the keys are going to the buffer while the
+// menu still looks like the active surface.
+func TestClickingIntoTheBufferClosesTheMenu(t *testing.T) {
+	h := newHarness(t, DefaultConfig(), "")
+
+	h.pressKey(tui.KeyF10)
+	h.read(func() { h.app.menu.OpenCategory(idFile) })
+	h.settle()
+	h.settle()
+	if !strings.Contains(h.tb.String(), "New") {
+		t.Fatalf("the dropdown did not open:\n%s", h.tb.String())
+	}
+
+	// Focus goes to the editor, exactly as a click into the buffer does.
+	h.read(func() { h.app.editorPane.FocusActive() })
+	h.settle()
+	h.settle()
+
+	if grid := h.tb.String(); strings.Contains(grid, "New") {
+		t.Errorf("the dropdown is still open after focus moved to the buffer:\n%s", grid)
+	}
+	if h.menuActive() {
+		t.Error("the menu still reports itself active after focus left it")
+	}
+}
+
+// TestF10AlwaysStartsAtTheFirstCategory.
+//
+// The selection survives a close, so reaching the menu again used to resume
+// wherever the last visit ended: use Help, press F10, and the bar comes up on
+// Help. Every visit starts at the left.
+func TestF10AlwaysStartsAtTheFirstCategory(t *testing.T) {
+	h := newHarness(t, DefaultConfig(), "")
+
+	// Leave the selection somewhere other than the first category.
+	h.pressKey(tui.KeyF10)
+	h.read(func() { h.app.menu.OpenCategory(idHelp) })
+	h.settle()
+	var sel widget.ItemID
+	h.read(func() { sel, _ = h.app.menu.Menu().Selected() })
+	if sel == idFile {
+		t.Fatalf("the fixture did not move the selection off File (got %q)", sel)
+	}
+	h.escape()
+	h.escape()
+
+	h.pressKey(tui.KeyF10)
+	h.read(func() { sel, _ = h.app.menu.Menu().Selected() })
+	if sel != idFile {
+		t.Errorf("F10 resumed on %q; every visit starts at the first category", sel)
+	}
+}
+
+// TestEscapeUnwindsTheMenuOneStageAtATime.
+//
+// The original editor's Escape was STAGED, and the migration flattened it: the
+// widget closed the whole cascade on the first press and reported the key
+// handled even with nothing open, so this editor had to layer a resolver that
+// claimed Escape back just to let it reach the buffer.
+//
+// The widget now closes exactly one level per press and leaves Escape unhandled
+// at the root, so the staging falls out of the contract and the workaround is
+// gone. Counting presses is the assertion: a user backing out of a submenu
+// expects to land in the dropdown that opened it, not on the bar.
+func TestEscapeUnwindsTheMenuOneStageAtATime(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		open    func(h *harness)
+		presses int
+	}{
+		{"F10 only", func(h *harness) {}, 1},
+		{"a dropdown", func(h *harness) {
+			h.read(func() { h.app.menu.OpenCategory(idFile) })
+			h.settle()
+		}, 2},
+		{"a nested cascade", func(h *harness) {
+			h.read(func() { h.app.menu.OpenCategory(idOption) })
+			h.settle()
+			h.settle()
+			h.read(func() { _ = h.app.menu.Menu().Open(idKeymaps) })
+			h.settle()
+		}, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, DefaultConfig(), "")
+			h.pressKey(tui.KeyF10)
+			tc.open(h)
+			h.settle()
+			if !h.menuActive() {
+				t.Fatal("the menu is not active after opening")
+			}
+
+			// One short of the count: the menu must still be active.
+			for i := 0; i < tc.presses-1; i++ {
+				h.escape()
+				if !h.menuActive() {
+					t.Fatalf("Escape %d of %d left the menu; each press should unwind "+
+						"one stage", i+1, tc.presses)
+				}
+			}
+			h.escape()
+			if h.menuActive() {
+				t.Errorf("the menu is still active after %d presses", tc.presses)
+			}
+			// And focus came back to the buffer rather than being left nowhere.
+			if got := h.mode(); got == "" {
+				t.Error("the editor reports no mode after the menu released focus")
+			}
+		})
+	}
+}
+
+// TestTheExitDialogAnswersItsMnemonics.
+//
+// The original editor's exit confirmation answered y and n from either button.
+// The first migration dropped that and recorded it as an accepted loss; it was
+// not one, and it is back — through golib's Button metadata and the Modal's
+// resolution rather than around them.
+func TestTheExitDialogAnswersItsMnemonics(t *testing.T) {
+	t.Run("n dismisses without quitting", func(t *testing.T) {
+		var quit atomic.Bool
+		h := newHarnessQuit(t, func() { quit.Store(true) })
+		h.read(func() { h.app.menu.OpenExitModal() })
+		h.settle()
+		h.settle()
+		if !strings.Contains(h.tb.String(), "Are you sure") {
+			t.Fatalf("the dialog did not open:\n%s", h.tb.String())
+		}
+
+		h.pressKey('n')
+		if quit.Load() {
+			t.Error("n quit the editor; it is the cancel button")
+		}
+		if strings.Contains(h.tb.String(), "Are you sure") {
+			t.Errorf("n did not dismiss the dialog:\n%s", h.tb.String())
+		}
+	})
+
+	t.Run("y quits", func(t *testing.T) {
+		var quit atomic.Bool
+		h := newHarnessQuit(t, func() { quit.Store(true) })
+		h.read(func() { h.app.menu.OpenExitModal() })
+		h.settle()
+		h.settle()
+		h.pressKey('y')
+		if !quit.Load() {
+			t.Error("y did not quit; it is the confirm button")
+		}
+	})
+}
+
+// newHarnessQuit is newHarness with a quit callback the test can observe.
+func newHarnessQuit(t *testing.T, quit func()) *harness {
+	t.Helper()
+	tb := tui.NewTestBackend(80, 24)
+	app, err := New(DefaultConfig(), "", quit)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a := tui.NewApp(app, tui.WithBackend(tb))
+	h := &harness{t: t, app: app, rt: a, tb: tb, stop: cancel, done: make(chan error, 1)}
+	go func() { h.done <- a.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-h.done:
+		case <-time.After(3 * time.Second):
+			t.Error("App.Run did not return within 3s after cancel")
+		}
+	})
+	h.settle()
+	return h
 }
