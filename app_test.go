@@ -798,3 +798,59 @@ func TestTheMenuShowsWhereTheKeyboardIs(t *testing.T) {
 		t.Errorf("the selection is %q with File open, want the level's first row", sel)
 	}
 }
+
+// TestClickingIntoTheBufferClosesTheMenu.
+//
+// A dropdown left hanging after the user has clicked into the text is covering
+// the line they just aimed at, and the keys are going to the buffer while the
+// menu still looks like the active surface.
+func TestClickingIntoTheBufferClosesTheMenu(t *testing.T) {
+	h := newHarness(t, DefaultConfig(), "")
+
+	h.pressKey(tui.KeyF10)
+	h.read(func() { h.app.menu.OpenCategory(idFile) })
+	h.settle()
+	h.settle()
+	if !strings.Contains(h.tb.String(), "New") {
+		t.Fatalf("the dropdown did not open:\n%s", h.tb.String())
+	}
+
+	// Focus goes to the editor, exactly as a click into the buffer does.
+	h.read(func() { h.app.editorPane.FocusActive() })
+	h.settle()
+	h.settle()
+
+	if grid := h.tb.String(); strings.Contains(grid, "New") {
+		t.Errorf("the dropdown is still open after focus moved to the buffer:\n%s", grid)
+	}
+	if h.menuActive() {
+		t.Error("the menu still reports itself active after focus left it")
+	}
+}
+
+// TestF10AlwaysStartsAtTheFirstCategory.
+//
+// The selection survives a close, so reaching the menu again used to resume
+// wherever the last visit ended: use Help, press F10, and the bar comes up on
+// Help. Every visit starts at the left.
+func TestF10AlwaysStartsAtTheFirstCategory(t *testing.T) {
+	h := newHarness(t, DefaultConfig(), "")
+
+	// Leave the selection somewhere other than the first category.
+	h.pressKey(tui.KeyF10)
+	h.read(func() { h.app.menu.OpenCategory(idHelp) })
+	h.settle()
+	var sel widget.ItemID
+	h.read(func() { sel, _ = h.app.menu.Menu().Selected() })
+	if sel == idFile {
+		t.Fatalf("the fixture did not move the selection off File (got %q)", sel)
+	}
+	h.escape()
+	h.escape()
+
+	h.pressKey(tui.KeyF10)
+	h.read(func() { sel, _ = h.app.menu.Menu().Selected() })
+	if sel != idFile {
+		t.Errorf("F10 resumed on %q; every visit starts at the first category", sel)
+	}
+}

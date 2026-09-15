@@ -280,6 +280,12 @@ func (a *App) HandleEvent(ev tui.Event) bool {
 	case tui.TickEvent:
 		a.refresh()
 		return true
+	case tui.FocusEvent:
+		// A FocusEvent bubbles up from whichever node lost or gained focus, so
+		// this is where the App learns the user has clicked into the buffer
+		// while a dropdown was open. Not consumed: other components are
+		// entitled to the same news.
+		a.menu.CloseOnBlur()
 	case tui.KeyEvent:
 		// ESCAPE LEAVES THE MENU. The widget uses Escape to close one open
 		// level and does not surrender focus when the last one goes, which is

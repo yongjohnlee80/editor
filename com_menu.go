@@ -250,11 +250,43 @@ func (tm *TopMenu) ModalActive() bool { return tm.modal != nil }
 // ActiveModal is the dialog currently up, or nil.
 func (tm *TopMenu) ActiveModal() *widget.Modal { return tm.modal }
 
+// CloseOnBlur closes the cascade when focus leaves the menu.
+//
+// APPLICATION POLICY, NOT THE WIDGET'S. golib deliberately keeps a level open
+// across a focus loss — a renderer drawing a cascade must still see it, and an
+// involuntary loss is not a decision the user made about the menu. This editor
+// wants the other rule: clicking into the buffer means "I am done with the
+// menu", and a dropdown left hanging over the text is covering the line the
+// user just aimed at.
+//
+// Called from App.HandleEvent, which sees the FocusEvent bubble past on its way
+// up from the menu.
+func (tm *TopMenu) CloseOnBlur() {
+	if tm.menu.OpenLevels() == 0 || tm.Active() {
+		return
+	}
+	tm.menu.Close()
+	if ctx := tm.menu.Context(); ctx != nil {
+		ctx.MarkDirty()
+	}
+}
+
 // Activate gives the menu focus.
 func (tm *TopMenu) Activate() {
-	if ctx := tm.menu.Context(); ctx != nil {
-		ctx.RequestFocus()
+	ctx := tm.menu.Context()
+	if ctx == nil {
+		return
 	}
+	// ALWAYS FROM THE FIRST CATEGORY. The selection persists across a close, so
+	// without this, reaching the menu again resumed wherever the last visit
+	// ended — press F10 after using Help and the bar comes up on Help, which is
+	// not where anybody expects to start.
+	if !tm.Active() {
+		if id, ok := categoryAt(0); ok {
+			tm.menu.Select(id)
+		}
+	}
+	ctx.RequestFocus()
 }
 
 // Deactivate closes any open level and hands focus back to the editor.

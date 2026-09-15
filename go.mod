@@ -5,7 +5,7 @@ go 1.25.3
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/google/subcommands v1.2.0
-	github.com/yongjohnlee80/golib v0.5.21-0.20260915195151-2331a7bb7a77
+	github.com/yongjohnlee80/golib v0.5.21-0.20260915200446-b8ff7246b3f2
 )
 
 require (
