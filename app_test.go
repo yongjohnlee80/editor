@@ -708,3 +708,93 @@ func rowOf(screen, sub string) int {
 	}
 	return -1
 }
+
+// attrAt is the rendered attributes of one cell, for asserting a HIGHLIGHT.
+//
+// A highlight is an attribute, not a character: a test that reads the text
+// cannot see one at all, which is how "the menu is highlighted" went unchecked
+// through a change that stopped highlighting it.
+func (h *harness) attrAt(x, y int) tui.CellAttrs {
+	h.t.Helper()
+	grid := h.tb.Snapshot()
+	if y >= len(grid) || x >= len(grid[y]) {
+		h.t.Fatalf("cell (%d,%d) is off the grid", x, y)
+	}
+	return grid[y][x].Attrs
+}
+
+// cellOf finds the first cell of sub on screen.
+func (h *harness) cellOf(sub string) (x, y int) {
+	h.t.Helper()
+	grid := h.tb.Snapshot()
+	for row := range grid {
+		line := ""
+		for _, c := range grid[row] {
+			if c.Continuation() {
+				continue
+			}
+			if c.Content == "" {
+				line += " "
+				continue
+			}
+			line += c.Content
+		}
+		if i := strings.Index(line, sub); i >= 0 {
+			return i, row
+		}
+	}
+	h.t.Fatalf("%q is not on screen:\n%s", sub, h.tb.String())
+	return 0, 0
+}
+
+// TestTheMenuShowsWhereTheKeyboardIs.
+//
+// Three states, because the interesting part is the DIFFERENCE between them
+// and any one of them alone is satisfied by a menu that highlights nothing:
+//
+//  1. editing — no category highlighted, or the bar claims the keyboard;
+//  2. menu active — the category is highlighted, or there is no way to tell the
+//     menu is what the arrow keys are driving;
+//  3. dropdown open — a row INSIDE it is highlighted, not the category. Opening
+//     a level hands the selection to that level, and this editor briefly
+//     dragged it back to the bar, leaving the dropdown with nothing marked.
+func TestTheMenuShowsWhereTheKeyboardIs(t *testing.T) {
+	h := newHarness(t, DefaultConfig(), "")
+
+	fx, fy := h.cellOf("File")
+	ox, _ := h.cellOf("Option")
+
+	editing := h.attrAt(fx, fy)
+	if editing != h.attrAt(ox, fy) {
+		t.Errorf("while editing, File is painted %+v and Option %+v; the bar is "+
+			"claiming the keyboard\n%s", editing, h.attrAt(ox, fy), h.tb.String())
+	}
+
+	h.pressKey(tui.KeyF10)
+	if !h.menuActive() {
+		t.Fatal("F10 did not activate the menu")
+	}
+	active := h.attrAt(fx, fy)
+	if active == h.attrAt(ox, fy) {
+		t.Errorf("with the menu active, File is painted exactly like Option (%+v); "+
+			"nothing shows which category the keys act on\n%s", active, h.tb.String())
+	}
+
+	h.read(func() { h.app.menu.OpenCategory(idFile) })
+	h.settle()
+	h.settle()
+	nx, ny := h.cellOf("New")
+	sx, sy := h.cellOf("Save") // its OWN row: sampling Save's column on New's
+	// row reads a cell inside New, which compares the highlighted row with
+	// itself and passes whatever the widget does.
+	if h.attrAt(nx, ny) == h.attrAt(sx, sy) {
+		t.Errorf("with the dropdown open, New is painted exactly like Save (%+v); "+
+			"the selection stayed on the bar instead of moving into the level\n%s",
+			h.attrAt(nx, ny), h.tb.String())
+	}
+	var sel widget.ItemID
+	h.read(func() { sel, _ = h.app.menu.Menu().Selected() })
+	if sel != "file.new" {
+		t.Errorf("the selection is %q with File open, want the level's first row", sel)
+	}
+}

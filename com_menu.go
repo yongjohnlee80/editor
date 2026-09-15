@@ -285,10 +285,12 @@ func (tm *TopMenu) Toggle() {
 // a bad moment wants over nothing at all.
 func (tm *TopMenu) OpenCategory(id widget.ItemID) {
 	tm.Activate()
-	if err := tm.menu.Open(id); err != nil {
-		return
-	}
-	tm.menu.Select(id)
+	// NO Select AFTERWARDS. Opening a level hands the selection to that level's
+	// first row, which is what puts the highlight on "New" when File drops
+	// down. Selecting the category again here dragged it back to the bar, so
+	// the dropdown opened with nothing in it highlighted and the arrow keys
+	// appeared to do nothing.
+	_ = tm.menu.Open(id)
 }
 
 // categoryAt maps a positional shortcut onto a row identity. The keyboard
