@@ -51,8 +51,14 @@ func New(cfg Config, path string, quit func()) (*App, error) {
 	a.footer = newFooter()
 
 	// menu manages the top-level Borland-style menu bar (File, Option, Help),
-	// dropdowns, and modals.
-	a.menu = NewTopMenu(nil, TopMenuCallbacks{
+	// its dropdowns, and the dialogs they open. The rows, the selection and the
+	// popups are golib/tui's; what lives here is which commands this editor has
+	// and what they do.
+	placement := MenuPlacement(strings.ToLower(cfg.Menu.Placement))
+	if placement == "" {
+		placement = PlacementTop
+	}
+	a.menu = NewTopMenu(placement, TopMenuCallbacks{
 		OnQuit: a.quit,
 		OnStatusMessage: func(msg string) {
 			a.setMessage(msg)
@@ -60,8 +66,11 @@ func New(cfg Config, path string, quit func()) (*App, error) {
 		OnRestoreFocus: func() {
 			a.editorPane.FocusActive()
 		},
-	}, resolver)
-	a.menu.SetCategories(a.buildEditorMenuCategories())
+	})
+	a.menu.SetHandlers(a.menuHandlers())
+	if err := a.menu.SetModel(a.buildMenuModel()); err != nil {
+		return nil, err
+	}
 
 	// dock is the top-level layout container. It describes the screen from
 	// the outside in:
@@ -74,13 +83,9 @@ func New(cfg Config, path string, quit func()) (*App, error) {
 	//   │  │  footer (status bar)     ← pinned bottom │ │
 	//   │  └─────────────────────────────────────────-┘ │
 	//   └──────────────────────────────────────────────-┘
-	// placement configures where the menu bar is docked: Top, Bottom, Left, or Right.
-	placement := MenuPlacement(strings.ToLower(cfg.Menu.Placement))
-	if placement == "" {
-		placement = PlacementTop
-	}
-	a.menu.SetPlacement(placement)
-
+	// The bar orients the menu and decides which way dropdowns open; WHERE it
+	// sits is this layout's decision, so the edge is pinned here to match the
+	// orientation the bar was built with.
 	dock := tui.NewDock()
 	switch placement {
 	case PlacementBottom:
@@ -98,11 +103,16 @@ func New(cfg Config, path string, quit func()) (*App, error) {
 	}
 	dock.Add(a.editorPane)
 
-	// host wraps the dock in an OverlayHost so that modal widgets and dropdown
-	// popups have a surface to attach to on top of the rest of the UI without
+	// host wraps the dock in an OverlayHost so that dialogs and dropdown popups
+	// have a surface to attach to on top of the rest of the UI without
 	// disturbing the layout below.
+	//
+	// The menu finds this host by walking up from itself — it is an ancestor of
+	// the bar — so its dropdowns need no wiring. Dialogs do: the menu is told
+	// where to put them, because it is built before the host that will hold
+	// them exists.
 	a.host = widget.NewOverlayHost(dock)
-	a.host.Stack.Add(a.menu.Overlay())
+	a.menu.AttachHost(a.host)
 
 	// registry is the command registry mapping ex command verbs to Handlers.
 	a.registry = NewRegistry()
@@ -268,7 +278,23 @@ func (a *App) HandleEvent(ev tui.Event) bool {
 	case tui.TickEvent:
 		a.refresh()
 		return true
+	case tui.FocusEvent:
+		// A FocusEvent bubbles up from whichever node lost or gained focus, so
+		// this is where the App learns the user has clicked into the buffer
+		// while a dropdown was open. Not consumed: other components are
+		// entitled to the same news.
+		a.menu.CloseOnBlur()
 	case tui.KeyEvent:
+		// ESCAPE LEAVES THE MENU, once the menu has stopped consuming it. The
+		// widget closes exactly one open level per press and leaves Escape
+		// UNHANDLED when there are none, so the key arrives here only at the
+		// root — one press per level, then one more that returns to the buffer.
+		// No consumer resolver is needed for that any more; the widget's own
+		// contract produces it.
+		if e.Kind == tui.KeyPress && e.Code == tui.KeyEscape && a.menu.Active() {
+			a.menu.Deactivate()
+			return true
+		}
 		if e.Kind != tui.KeyRelease && a.resolver != nil {
 			if action, ok := a.resolver.Resolve(ScopeEditorNormal, e); ok {
 				switch action {
@@ -311,19 +337,22 @@ func (a *App) handleKeyAction(action KeyAction) {
 	}
 }
 
-// openMenuCategory activates the menu and directly opens the requested category dropdown.
+// openMenuCategory activates the menu and opens the requested category.
+//
+// The shortcut counts categories and the model names them, so an index out of
+// range is a keybinding pointing at a category this editor does not have —
+// ignored rather than clamped, because opening the wrong menu is worse than
+// opening none.
 func (a *App) openMenuCategory(idx int) {
-	a.menu.OpenCategory(idx, a.ctx)
+	id, ok := categoryAt(idx)
+	if !ok {
+		return
+	}
+	a.menu.OpenCategory(id)
 }
 
 // toggleMenuBar toggles activation of the top menu bar.
-func (a *App) toggleMenuBar() {
-	if a.menu.Active() {
-		a.menu.Deactivate(a.ctx)
-	} else {
-		a.menu.Activate(a.ctx)
-	}
-}
+func (a *App) toggleMenuBar() { a.menu.Toggle() }
 
 // openCommand shows the command line, seeded with prefill.
 func (a *App) openCommand(prefill string) {
@@ -389,61 +418,80 @@ func (a *App) refresh() {
 	a.ctx.MarkDirty()
 }
 
-func (a *App) buildEditorMenuCategories() []MenuCategory {
-	var vimItem, nanoItem *MenuItem
-	vimItem = NewCheckableMenuItem("1. Vim  (modal)", '1', 0, a.editorPane.Keyset() == widget.KeysetVim, func() {
-		a.editorPane.SetKeyset(widget.KeysetVim)
-		vimItem.SetChecked(true)
-		nanoItem.SetChecked(false)
-		a.setMessage("switched keymap to Vim (modal)")
-		a.menu.Deactivate(a.ctx)
-	})
-	nanoItem = NewCheckableMenuItem("2. Nano (modeless)", '2', 0, a.editorPane.Keyset() == widget.KeysetNano, func() {
-		a.editorPane.SetKeyset(widget.KeysetNano)
-		nanoItem.SetChecked(true)
-		vimItem.SetChecked(false)
-		a.setMessage("switched keymap to Nano (modeless)")
-		a.menu.Deactivate(a.ctx)
-	})
+// buildMenuModel is the editor's menu as DATA.
+//
+// Every row names an action identity; menuHandlers below says what each one
+// does. Keeping the two apart is what lets the model be built from editor state
+// (which keyset is live) without closing over the App in every row, and what
+// makes the menu testable by comparing values instead of by clicking.
+//
+// Help is pegged to the far end of the bar with MenuItemModel.PegRight, which
+// is the upstream replacement for the RightPeg flag this editor's own menu
+// carried.
+func (a *App) buildMenuModel() []widget.MenuItemModel {
+	vim := widget.NewRadio(idKeysetVim, "1. Vim  (modal)", keysetGroup, cmd(actKeysetVim))
+	vim.Hotkey, vim.HotkeyIdx = '1', 0
+	vim.Checked = a.editorPane.Keyset() == widget.KeysetVim
 
-	return []MenuCategory{
-		{
-			Name:      "File",
-			Hotkey:    'f',
-			HotkeyIdx: 0,
-			Items: []*MenuItem{
-				NewMenuItem("New", 'n', 0, func() {
-					a.menu.OpenNotImplemented("File -> New", a.ctx)
-				}),
-				NewMenuItem("Open", 'o', 0, func() {
-					a.menu.OpenNotImplemented("File -> Open", a.ctx)
-				}),
-				NewMenuItem("Save", 's', 0, func() {
-					a.menu.OpenNotImplemented("File -> Save", a.ctx)
-				}),
-				NewMenuItem("Exit", 'x', 1, func() {
-					a.menu.OpenExitModal(a.ctx)
-				}),
-			},
-		},
-		{
-			Name:      "Option",
-			Hotkey:    'o',
-			HotkeyIdx: 0,
-			Items: []*MenuItem{
-				NewMenuItemWithSubmenu("Keymaps", 'k', 0, vimItem, nanoItem),
-			},
-		},
-		{
-			Name:      "Help",
-			Hotkey:    'h',
-			HotkeyIdx: 0,
-			RightPeg:  true,
-			Items: []*MenuItem{
-				NewMenuItem("About", 'a', 0, func() {
-					a.menu.OpenNotImplemented("Help -> About", a.ctx)
-				}),
-			},
-		},
+	nano := widget.NewRadio(idKeysetNano, "2. Nano (modeless)", keysetGroup, cmd(actKeysetNano))
+	nano.Hotkey, nano.HotkeyIdx = '2', 0
+	nano.Checked = a.editorPane.Keyset() == widget.KeysetNano
+
+	file := widget.NewSubmenu(idFile, "File", []widget.MenuItemModel{
+		hotkeyed(widget.NewCommand("file.new", "New", cmd(actFileNew)), 'n', 0),
+		hotkeyed(widget.NewCommand("file.open", "Open", cmd(actFileOpen)), 'o', 0),
+		hotkeyed(widget.NewCommand("file.save", "Save", cmd(actFileSave)), 's', 0),
+		hotkeyed(widget.NewCommand("file.exit", "Exit", cmd(actFileExit)), 'x', 1),
+	})
+	file.Hotkey, file.HotkeyIdx = 'f', 0
+
+	keymaps := widget.NewSubmenu(idKeymaps, "Keymaps", []widget.MenuItemModel{vim, nano})
+	keymaps.Hotkey, keymaps.HotkeyIdx = 'k', 0
+
+	option := widget.NewSubmenu(idOption, "Option", []widget.MenuItemModel{keymaps})
+	option.Hotkey, option.HotkeyIdx = 'o', 0
+
+	help := widget.NewSubmenu(idHelp, "Help", []widget.MenuItemModel{
+		hotkeyed(widget.NewCommand("help.about", "About", cmd(actHelpAbout)), 'a', 0),
+	})
+	help.Hotkey, help.HotkeyIdx = 'h', 0
+	// Help sits at the far end of the bar, where it has sat in this kind of
+	// application for thirty years.
+	help.PegRight = true
+
+	return []widget.MenuItemModel{file, option, help}
+}
+
+// hotkeyed sets a row's mnemonic. A helper because the constructors take the
+// fields every row needs and leave the optional ones to the caller, and three
+// lines per row would bury the model in assignments.
+func hotkeyed(m widget.MenuItemModel, key rune, idx int) widget.MenuItemModel {
+	m.Hotkey, m.HotkeyIdx = key, idx
+	return m
+}
+
+// menuHandlers is the command table: what each menu identity does.
+//
+// The keyset rows are the only ones with real behaviour so far; the rest report
+// that they are unimplemented, which is what they did before.
+func (a *App) menuHandlers() map[tui.ActionID]func() {
+	notImplemented := func(what string) func() {
+		return func() { a.menu.OpenNotImplemented(what) }
+	}
+	setKeyset := func(k widget.Keyset, msg string) func() {
+		return func() {
+			a.editorPane.SetKeyset(k)
+			a.setMessage(msg)
+			a.menu.Deactivate()
+		}
+	}
+	return map[tui.ActionID]func(){
+		actFileNew:    notImplemented("File -> New"),
+		actFileOpen:   notImplemented("File -> Open"),
+		actFileSave:   notImplemented("File -> Save"),
+		actFileExit:   func() { a.menu.OpenExitModal() },
+		actHelpAbout:  notImplemented("Help -> About"),
+		actKeysetVim:  setKeyset(widget.KeysetVim, "switched keymap to Vim (modal)"),
+		actKeysetNano: setKeyset(widget.KeysetNano, "switched keymap to Nano (modeless)"),
 	}
 }
