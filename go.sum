@@ -2,8 +2,8 @@ github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/google/subcommands v1.2.0 h1:vWQspBTo2nEqTUFita5/KeEWlUL8kQObDFbub/EN9oE=
 github.com/google/subcommands v1.2.0/go.mod h1:ZjhPrFU+Olkh9WazFPsl27BQ4UPiG37m3yTrtFlrHVk=
-github.com/yongjohnlee80/golib v0.5.21 h1:Rk2Zb2cNMH691x1IKCrcBJVk6yPkI5RM8mepfU9dMw4=
-github.com/yongjohnlee80/golib v0.5.21/go.mod h1:8C5jirm0P6lnk5MxCZKUf8mSND3w2JRq1CRBlV3YD0c=
+github.com/yongjohnlee80/golib v0.5.22 h1:XO/6v7ekrugDAR9B0hCvc31FSkkoI7iMu9estGKHUHk=
+github.com/yongjohnlee80/golib v0.5.22/go.mod h1:8C5jirm0P6lnk5MxCZKUf8mSND3w2JRq1CRBlV3YD0c=
 golang.org/x/sys v0.46.0 h1:noSf2Fq6F8DBgS+LysIkx7rIExoNHJsxOAtPp4rthXw=
 golang.org/x/sys v0.46.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
 golang.org/x/term v0.44.0 h1:0rLvDRCtNj0gZkyIXhCyOb2OAzEhLVqc4B+hrsBhrmc=
